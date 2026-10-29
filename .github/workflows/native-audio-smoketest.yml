@@ -10,6 +10,9 @@ on:
       - 'ci/smoke/**'
       - 'ci/unit/**'
       - 'app.js'
+      - 'index.html'
+      - 'facts.js'
+      - 'pets.js'
       - 'package.json'
       - 'capacitor.config.json'
       - '.github/workflows/native-audio-smoketest.yml'
@@ -38,6 +41,13 @@ jobs:
 
       - name: Run data-integrity pure-logic tests
         run: node ci/unit/data-integrity.test.js
+
+      - name: Install dom-boot test dependencies
+        working-directory: ci/unit
+        run: npm ci
+
+      - name: Run dom-boot crash test (real index.html + app.js + facts.js + pets.js in jsdom)
+        run: node ci/unit/dom-boot.test.js
 
   smoke-test:
     runs-on: ubuntu-latest
