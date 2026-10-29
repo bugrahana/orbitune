@@ -1,0 +1,6 @@
+{
+  "appId": "com.bugrahana.orbitune",
+  "appName": "Orbitune",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}

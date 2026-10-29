@@ -1,0 +1,15 @@
+{
+  "name": "orbitune",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Orbitune - canli radyo PWA, Capacitor ile Android APK sarmalayicisi",
+  "scripts": {
+    "android:add": "cap add android",
+    "android:sync": "cap copy android"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2"
+  }
+}
