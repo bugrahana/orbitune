@@ -40,8 +40,8 @@ fail=0
 
 grep -q "com.orbitune.smoketest" media_session.txt \
   || { echo "::error::No media session owned by the app was found after backgrounding"; fail=1; }
-grep -q "state=3" media_session.txt \
-  || { echo "::error::Media session is not reporting PLAYING (state=3) after backgrounding - audio likely got suspended"; fail=1; }
+grep -q "state=PLAYING" media_session.txt \
+  || { echo "::error::Media session is not reporting PLAYING after backgrounding - audio likely got suspended"; fail=1; }
 
 grep -q "com.orbitune.smoketest" notification.txt \
   || { echo "::error::No lock-screen/notification media card was posted while the app was backgrounded"; fail=1; }
