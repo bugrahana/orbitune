@@ -510,14 +510,35 @@ function setAudioVolume(v) {
   else audio.volume = v;
 }
 
+// Unlike the <audio> element, the native plugin's stop/unload/preload/play
+// calls don't implicitly cancel each other - issuing a second preload+play
+// before the first one's stop+unload has actually finished can leave two
+// independent native players running at once (two stations audible
+// together, and pause/stop only ever reaching one of them). Every call that
+// mutates native playback goes through this queue so they always run one at
+// a time, in order.
+let nativeQueue = Promise.resolve();
+function queueNative(task) {
+  const run = () => Promise.resolve().then(task);
+  const p = nativeQueue.then(run, run);
+  nativeQueue = p.catch(() => {});
+  return p;
+}
+let playGen = 0;
+
 const player = {
   station: null, queue: [], queueKind: 'list', history: [], status: 'idle', error: '', skipCount: 0, loadTimer: null,
   get playing() { return this.status === 'live' || this.status === 'loading'; },
   stop() {
     clearTimeout(this.loadTimer);
     clearWatchdog();
-    if (NativeAudio) { NativeAudio.stop({ assetId: NATIVE_ASSET_ID }).catch(() => {}); NativeAudio.unload({ assetId: NATIVE_ASSET_ID }).catch(() => {}); }
-    else { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+    playGen++; // invalidate any in-flight playStation() attempt
+    if (NativeAudio) {
+      queueNative(async () => {
+        try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+        try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+      });
+    } else { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     this.status = 'idle';
     render();
   },
@@ -530,7 +551,6 @@ function setCurrent(s, queue) {
   save();
 }
 
-let playGen = 0;
 async function playStation(s, opts = {}) {
   if (!s) return;
   const gen = ++playGen;
@@ -552,10 +572,19 @@ async function playStation(s, opts = {}) {
   try {
     if (NativeAudio) {
       await ensureNative();
-      try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
-      try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
-      await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
-      await NativeAudio.play({ assetId: NATIVE_ASSET_ID });
+      await queueNative(async () => {
+        if (gen !== playGen) return;    // superseded while waiting in the native queue
+        try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+        try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+        if (gen !== playGen) return;
+        await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
+        if (gen !== playGen) {          // superseded while preloading - undo, don't play it
+          try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+          try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+          return;
+        }
+        await NativeAudio.play({ assetId: NATIVE_ASSET_ID });
+      });
     } else {
       audio.volume = 1;
       audio.src = s.url;
@@ -591,7 +620,7 @@ function onStreamFail() {
       return;
     }
   }
-  if (NativeAudio) NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+  if (NativeAudio) queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
   else audio.pause();
   player.status = 'error';
   player.error = navigator.onLine === false ? t('error.network') : t('error.stream');
@@ -617,7 +646,8 @@ function togglePlay() {
   if (!player.station) { shuffleCountry(); return; }
   if (player.status === 'live' || player.status === 'loading') {
     if (NativeAudio) {
-      NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+      playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
+      queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
       clearTimeout(player.loadTimer);
       clearWatchdog();
       player.status = 'paused';
@@ -745,7 +775,8 @@ function sleepTick() {
     clearInterval(sleep.timer);
     sleep.endAt = 0; sleep.minutes = 0;
     if (NativeAudio) {
-      NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+      playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
+      queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
       clearTimeout(player.loadTimer);
       clearWatchdog();
       if (player.status === 'live' || player.status === 'loading') { player.status = 'paused'; render(); updateMediaSession(); }
