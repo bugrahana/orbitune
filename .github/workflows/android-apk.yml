@@ -88,10 +88,13 @@ jobs:
 
           import android.Manifest;
           import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
           import android.net.Uri;
           import android.os.Build;
           import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
           import android.os.PowerManager;
           import android.provider.Settings;
           import androidx.core.app.ActivityCompat;
@@ -111,12 +114,28 @@ jobs:
                       && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                       ActivityCompat.requestPermissions(this, new String[] { Manifest.permission.POST_NOTIFICATIONS }, 1001);
                   }
+
                   // Some OEMs (Xiaomi/MIUI, Samsung, Oppo, Vivo, ...) kill background apps
                   // more aggressively than stock Android even with a correct foreground
                   // service - verified on an emulator that the notification/media session
-                  // survive backgrounding, so a report of it disappearing on a real device
-                  // is almost always this. This is the standard, user-visible way to ask
-                  // to be exempted from it.
+                  // survive backgrounding/BACK, so a report of it disappearing on a real
+                  // device is almost always this. Ask once per install, not on every launch.
+                  SharedPreferences prefs = getSharedPreferences("orbitune_bg_setup", MODE_PRIVATE);
+                  if (!prefs.getBoolean("asked", false)) {
+                      prefs.edit().putBoolean("asked", true).apply();
+                      requestBatteryExemption();
+                      if (isKnownAggressiveOem()) {
+                          // Several big-name OEMs layer their own background-kill system on
+                          // top of stock Android's, which the standard battery-optimization
+                          // exemption above does not cover at all, and none of them publish
+                          // an official API for it. Delay so the two system dialogs don't
+                          // collide/get dropped by Android's background-activity rate limit.
+                          new Handler(Looper.getMainLooper()).postDelayed(this::openOemAutoStartSettings, 1500);
+                      }
+                  }
+              }
+
+              private void requestBatteryExemption() {
                   PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
                   if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
                       try {
@@ -127,6 +146,75 @@ jobs:
                           // Some OEMs block this intent entirely; nothing more we can do from here.
                       }
                   }
+              }
+
+              private boolean isKnownAggressiveOem() {
+                  if (Build.MANUFACTURER == null) return false;
+                  String m = Build.MANUFACTURER.toLowerCase();
+                  return m.equals("xiaomi") || m.equals("huawei") || m.equals("honor") || m.equals("oppo")
+                      || m.equals("oneplus") || m.equals("realme") || m.equals("vivo") || m.equals("letv")
+                      || m.equals("asus") || m.equals("meizu");
+              }
+
+              private void openOemAutoStartSettings() {
+                  // Undocumented per-OEM "autostart"/"protected apps" screens - none of
+                  // these manufacturers publish an official API, so this is a best-effort
+                  // catalog (same class names most background-audio/VoIP apps rely on).
+                  // Falls back to this app's own system settings page if every candidate
+                  // for this manufacturer is missing/renamed on a given firmware version.
+                  String m = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.toLowerCase();
+                  String[][] candidates;
+                  if (m.equals("xiaomi")) {
+                      candidates = new String[][] {
+                          { "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity" },
+                      };
+                  } else if (m.equals("huawei") || m.equals("honor")) {
+                      candidates = new String[][] {
+                          { "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity" },
+                          { "com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity" },
+                      };
+                  } else if (m.equals("oppo") || m.equals("oneplus") || m.equals("realme")) {
+                      candidates = new String[][] {
+                          { "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity" },
+                          { "com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity" },
+                          { "com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity" },
+                      };
+                  } else if (m.equals("vivo")) {
+                      candidates = new String[][] {
+                          { "com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity" },
+                          { "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity" },
+                      };
+                  } else if (m.equals("letv")) {
+                      candidates = new String[][] {
+                          { "com.letv.android.letvsafe", "com.letv.android.letvsafe.AutobootManageActivity" },
+                      };
+                  } else if (m.equals("asus")) {
+                      candidates = new String[][] {
+                          { "com.asus.mobilemanager", "com.asus.mobilemanager.autostart.AutoStartActivity" },
+                      };
+                  } else if (m.equals("meizu")) {
+                      candidates = new String[][] {
+                          { "com.meizu.safe", "com.meizu.safe.permission.PermissionMainActivity" },
+                      };
+                  } else {
+                      candidates = new String[0][];
+                  }
+
+                  for (String[] c : candidates) {
+                      try {
+                          Intent intent = new Intent();
+                          intent.setClassName(c[0], c[1]);
+                          startActivity(intent);
+                          return;
+                      } catch (Exception ignored) {
+                          // try the next candidate for this manufacturer
+                      }
+                  }
+                  try {
+                      Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                      fallback.setData(Uri.parse("package:" + getPackageName()));
+                      startActivity(fallback);
+                  } catch (Exception ignored) {}
               }
 
               // Default Capacitor behaviour finishes (destroys) the Activity when the

@@ -64,5 +64,32 @@ else
   echo "OK: existing instance was resumed, app.js was not reloaded"
 fi
 
+if grep -q "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" full_logcat.txt; then
+  echo "OK: battery-optimization exemption was requested on first launch"
+else
+  echo "::error::Battery-optimization exemption was never requested on first launch"
+  fail=1
+fi
+
+echo "--- one-time-prompt check: a fresh process launch must NOT ask again ---"
+adb shell am force-stop com.orbitune.app
+adb logcat -c
+adb shell am start -n com.orbitune.app/.MainActivity
+sleep 6
+adb logcat -d > second_launch_logcat.txt
+if grep -q "Uncaught" second_launch_logcat.txt; then
+  echo "::error::Uncaught JS exception on the second (fresh-process) launch"
+  grep "Uncaught" second_launch_logcat.txt
+  fail=1
+else
+  echo "OK: no uncaught JS exception on the second launch"
+fi
+if grep -q "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" second_launch_logcat.txt; then
+  echo "::error::Battery-optimization exemption was requested AGAIN on a second fresh launch - the one-time SharedPreferences gate isn't working, this would nag the user every launch"
+  fail=1
+else
+  echo "OK: second launch did not re-prompt for battery-optimization exemption"
+fi
+
 echo "--- full logcat saved as artifact regardless ---"
 exit $fail
