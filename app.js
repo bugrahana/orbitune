@@ -643,7 +643,16 @@ if (NativeAudio) {
   // a stale UI until the next explicit play/pause tap.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || !player.station) return;
+    const genAtQueryTime = playGen; // see below
     NativeAudio.isPlaying({ assetId: NATIVE_ASSET_ID }).then((res) => {
+      // This query can take a moment; if the user tapped play/pause (or a
+      // new station loaded) while it was in flight, playGen has already
+      // moved on and this result is stale - discard it instead of
+      // stomping on whatever that newer, authoritative action just set.
+      // (Confirmed via ci/unit/resume-reconcile.test.js's race scenario:
+      // without this check, a stale "not playing" reconcile could flip a
+      // station the user just started playing back to "paused".)
+      if (genAtQueryTime !== playGen) return;
       const reallyPlaying = !!(res && (res.isPlaying ?? res.value));
       if (reallyPlaying && player.status !== 'live' && player.status !== 'loading') {
         clearTimeout(player.loadTimer);
