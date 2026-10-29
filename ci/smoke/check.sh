@@ -64,4 +64,40 @@ grep -q "SMOKE_ACTION_FIRED:pause" transport_logcat.txt \
   || { echo "::error::Media button press (KEYCODE_MEDIA_PAUSE) never reached the setActionHandler('pause') callback - notification/hardware transport buttons are likely non-functional"; fail=1; }
 grep "SMOKE_ACTION_FIRED" transport_logcat.txt || true
 
+echo "--- now the BACK button specifically (not HOME) - what the user actually does to exit ---"
+adb shell am start -n com.orbitune.smoketest/.MainActivity
+sleep 2
+adb shell input keyevent KEYCODE_BACK
+sleep 10
+
+echo "--- dumpsys media_session after BACK ---"
+adb shell dumpsys media_session > media_session_after_back.txt
+cat media_session_after_back.txt
+
+echo "--- dumpsys notification after BACK ---"
+adb shell dumpsys notification --noredact > notification_full_after_back.txt
+grep -A 30 "com.orbitune.smoketest" notification_full_after_back.txt > notification_after_back.txt || true
+cat notification_after_back.txt
+
+echo "--- dumpsys activity services after BACK ---"
+adb shell dumpsys activity services com.orbitune.smoketest > services_after_back.txt
+cat services_after_back.txt
+
+grep -q "com.orbitune.smoketest" media_session_after_back.txt \
+  || { echo "::error::No media session owned by the app after BACK press - the session was torn down"; fail=1; }
+grep -q "state=PLAYING" media_session_after_back.txt \
+  || { echo "::error::Media session is not reporting PLAYING after BACK press"; fail=1; }
+grep -q "com.orbitune.smoketest" notification_after_back.txt \
+  || { echo "::error::Notification/lock-screen media card disappeared after BACK press - matches the real-device report"; fail=1; }
+grep -qi "isForeground=true" services_after_back.txt \
+  || { echo "::error::Service is no longer a foreground service after BACK press"; fail=1; }
+
+echo "--- transport control check after BACK ---"
+adb logcat -c
+adb shell input keyevent KEYCODE_MEDIA_PAUSE
+sleep 3
+adb logcat -d > transport_logcat_after_back.txt
+grep -q "SMOKE_ACTION_FIRED:pause" transport_logcat_after_back.txt \
+  || { echo "::error::Media button press after BACK never reached the JS action handler"; fail=1; }
+
 exit $fail

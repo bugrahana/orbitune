@@ -79,6 +79,26 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK" />' AndroidManifest.xml
           grep -E "FOREGROUND_SERVICE_MEDIA_PLAYBACK|WAKE_LOCK" AndroidManifest.xml
 
+      - name: Mirror the real app's back-button fix (so this harness tests the same code path)
+        run: |
+          mkdir -p ci/smoke/android/app/src/main/java/com/orbitune/smoketest
+          cat > ci/smoke/android/app/src/main/java/com/orbitune/smoketest/MainActivity.java <<'EOF'
+          package com.orbitune.smoketest;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onBackPressed() {
+                  if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
+                      super.onBackPressed();
+                  } else {
+                      moveTaskToBack(true);
+                  }
+              }
+          }
+          EOF
+
       - name: Build smoke-test debug APK
         working-directory: ci/smoke/android
         run: |
@@ -113,4 +133,9 @@ jobs:
             notification.txt
             services.txt
             transport_logcat.txt
+            media_session_after_back.txt
+            notification_full_after_back.txt
+            notification_after_back.txt
+            services_after_back.txt
+            transport_logcat_after_back.txt
           if-no-files-found: ignore
