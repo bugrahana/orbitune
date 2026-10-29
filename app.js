@@ -408,32 +408,65 @@ function logoUrl(s) {
 // Radio Browser's own `favicon` field is empty/broken for a lot of
 // stations. Rather than fetch+parse each homepage's og:image (CORS would
 // block that from the plain-web build, and it'd need a request per
-// station), use a public favicon-by-domain service as a second <img src> -
-// images aren't subject to CORS the way fetch() is, so this works in both
-// the native and plain-web builds with no API key, no scraping, and no
-// extra request logic: it's just another <img> that loads (or 404s) on
-// its own, same as the primary one. Not cached locally (deliberately, for
-// now) - every render asks the service fresh.
-function homepageFaviconUrl(s) {
+// station), chain through public favicon-by-domain services derived from
+// the station's `homepage` field - images aren't subject to CORS the way
+// fetch() is, so this works in both the native and plain-web builds with
+// no API key and no scraping: each is just another <img> that loads (or
+// fails) on its own. Not cached locally (deliberately, for now) - every
+// render asks fresh. Two services, tried in order, since neither alone
+// has full coverage (checked against real station homepages).
+function homepageFaviconCandidates(s) {
   try {
     const host = new URL(s.homepage).hostname;
-    return host ? `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}` : '';
-  } catch (_) { return ''; }
+    if (!host) return [];
+    return [
+      `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`,
+      `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico`,
+    ];
+  } catch (_) { return []; }
 }
 function artHTML(s, cls = '') {
   const src = logoUrl(s);
-  const fallback = homepageFaviconUrl(s);
+  const candidates = homepageFaviconCandidates(s);
   const h = hash(s.id || s.name) % 360;
   let img = '';
-  if (src) img = `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback${fallback ? ` data-fallback-src="${esc(fallback)}"` : ''}>`;
-  else if (fallback) img = `<img src="${esc(fallback)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>`;
+  if (src) {
+    img = `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback${candidates.length ? ` data-fallback-queue='${esc(JSON.stringify(candidates))}'` : ''}>`;
+  } else if (candidates.length) {
+    const [first, ...rest] = candidates;
+    img = `<img src="${esc(first)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback${rest.length ? ` data-fallback-queue='${esc(JSON.stringify(rest))}'` : ''}>`;
+  }
   return `<span class="art ${cls}" style="--h:${h}">${esc(initials(s.name))}${img}</span>`;
+}
+// Google's favicon-by-domain service returns HTTP 404 but WITH a valid,
+// decodable 16x16 generic globe image body instead of actually failing the
+// request - the <img> load succeeds (no error event) with a useless
+// placeholder image rather than revealing the initials (or trying the
+// next candidate) underneath. Real favicons from that service always come
+// back bigger than 16x16 (checked against several real domains), so
+// that's the only reliable way to tell a genuine icon apart from the
+// generic one once it's loaded. Scoped to that one service by URL, since
+// a real favicon from a DIFFERENT source legitimately can be 16x16.
+function isUselessFallback(el) {
+  return el.naturalWidth <= 16 && el.naturalHeight <= 16 && /google\.com\/s2\/favicons/.test(el.src);
+}
+function advanceArtFallback(el) {
+  let queue = [];
+  try { queue = JSON.parse(el.dataset.fallbackQueue || '[]'); } catch (_) {}
+  if (!queue.length) { el.remove(); return; }
+  const next = queue.shift();
+  if (queue.length) el.dataset.fallbackQueue = JSON.stringify(queue); else delete el.dataset.fallbackQueue;
+  el.src = next;
 }
 document.addEventListener('error', (e) => {
   const el = e.target;
   if (!el || el.tagName !== 'IMG' || !el.hasAttribute('data-fallback')) return;
-  const next = el.dataset.fallbackSrc;
-  if (next) { el.removeAttribute('data-fallback-src'); el.src = next; } else { el.remove(); }
+  advanceArtFallback(el);
+}, true);
+document.addEventListener('load', (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== 'IMG' || !el.hasAttribute('data-fallback')) return;
+  if (isUselessFallback(el)) advanceArtFallback(el);
 }, true);
 
 /* ───────────────────────── library ───────────────────────── */
@@ -778,7 +811,7 @@ function updateMediaSession() {
   const key = s.id + '|' + player.status + '|' + state.lang;
   if (key === msKey) return;
   msKey = key;
-  const art = logoUrl(s) || homepageFaviconUrl(s);
+  const art = logoUrl(s) || homepageFaviconCandidates(s)[0] || '';
   const artwork = art
     ? [{ src: art, sizes: '256x256', type: 'image/png' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
     : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
@@ -1007,20 +1040,20 @@ function paintLabel(s) {
   labelFor = key;
   const img = $('discLogo');
   const src = s ? logoUrl(s) : '';
-  const fallback = s ? homepageFaviconUrl(s) : '';
+  const queue = s ? homepageFaviconCandidates(s) : [];
   img.hidden = true;
-  img.onload = () => { if (labelFor === key) img.hidden = false; };
-  img.onerror = () => {
-    if (img.dataset.fallbackSrc) {
-      const next = img.dataset.fallbackSrc;
-      delete img.dataset.fallbackSrc;
-      img.src = next;
-    } else {
-      img.hidden = true;
-    }
+  const tryNext = () => {
+    if (!queue.length) { img.hidden = true; return; }
+    img.src = queue.shift();
   };
-  if (src) { if (fallback) img.dataset.fallbackSrc = fallback; img.src = src; }
-  else if (fallback) { delete img.dataset.fallbackSrc; img.src = fallback; }
+  img.onload = () => {
+    if (labelFor !== key) return;
+    if (isUselessFallback(img)) { tryNext(); return; }
+    img.hidden = false;
+  };
+  img.onerror = () => tryNext();
+  if (src) img.src = src;
+  else if (queue.length) img.src = queue.shift();
   else img.removeAttribute('src');
 }
 function paintDial(s) {
