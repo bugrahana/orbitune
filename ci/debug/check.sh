@@ -115,6 +115,25 @@ if adb shell cat /proc/net/unix 2>/dev/null | grep -q "$SOCK"; then
       echo "::error::Process is gone after back press with history open"
       fail=1
     fi
+
+    # The task/process checks above can both look fine even if the Activity
+    # was actually destroyed and silently recreated (same task, same
+    # process, brand new Activity+WebView+JS instance) - which is exactly
+    # the failure mode that matters here (a fresh app.js has no idea the
+    # old native audio player exists). Re-launching and checking whether
+    # app.js reloads is the real, decisive signal - it's what actually
+    # caught the original root-screen version of this bug.
+    adb shell am start -n com.orbitune.app/.MainActivity
+    sleep 4
+    adb logcat -d > after_panel_back_logcat.txt
+    PANEL_RELOAD_COUNT=$(grep -c "Handling local request: https://localhost/app.js" after_panel_back_logcat.txt || true)
+    echo "app.js load events since the panel-open back press: $PANEL_RELOAD_COUNT"
+    if [ "$PANEL_RELOAD_COUNT" -gt 0 ]; then
+      echo "::error::app.js reloaded after a back press WITH in-app history (panel open) - the Activity was recreated from scratch, orphaning the native audio player, even though the task/process both looked fine"
+      fail=1
+    else
+      echo "OK: app.js was not reloaded after the panel-open back press - the same instance was resumed"
+    fi
   else
     adb forward --remove tcp:9333 || true
     echo "::warning::Could not push history via CDP - skipping the panel-open back-press scenario"
