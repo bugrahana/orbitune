@@ -78,5 +78,50 @@ else
   echo "OK: no uncaught JS exception on the second launch"
 fi
 
+echo "--- back-press WITH in-app history (e.g. a panel like settings open) must ALSO not destroy the Activity ---"
+# A real report: backing out while the settings panel was open still
+# backgrounded/killed the app instead of just closing the panel, and the
+# native audio player was found orphaned afterwards. The root-screen check
+# above only covers canGoBack()==false; this pushes a history entry the
+# same way app.js's openPanel() does (history.pushState), so the app is
+# genuinely in the canGoBack()==true branch of onBackPressed() when BACK
+# is pressed - the one that case wasn't exercising at all.
+adb shell pidof com.orbitune.app > /dev/null 2>&1 || adb shell am start -n com.orbitune.app/.MainActivity
+sleep 2
+PID=$(adb shell pidof com.orbitune.app | tr -d '\r\n')
+SOCK="webview_devtools_remote_${PID}"
+if adb shell cat /proc/net/unix 2>/dev/null | grep -q "$SOCK"; then
+  adb forward tcp:9333 localabstract:"$SOCK"
+  sleep 1
+  if node ci/debug/push-history.js 9333; then
+    echo "OK: pushed an in-app history entry via CDP (simulating a panel being open)"
+    adb forward --remove tcp:9333 || true
+
+    adb logcat -c
+    adb shell input keyevent KEYCODE_BACK
+    sleep 2
+
+    TASK_COUNT=$(adb shell dumpsys activity activities | grep -c "com.orbitune.app" || true)
+    if [ "$TASK_COUNT" -eq 0 ]; then
+      echo "::error::Activity task disappeared after back press WITH in-app history (panel open) - the canGoBack()==true branch is destroying the Activity instead of just navigating back, orphaning the native audio player"
+      fail=1
+    else
+      echo "OK: task still present after back press with history open ($TASK_COUNT references)"
+    fi
+
+    if adb shell pidof com.orbitune.app > /dev/null 2>&1; then
+      echo "OK: process still alive after back press with history open"
+    else
+      echo "::error::Process is gone after back press with history open"
+      fail=1
+    fi
+  else
+    adb forward --remove tcp:9333 || true
+    echo "::warning::Could not push history via CDP - skipping the panel-open back-press scenario"
+  fi
+else
+  echo "::warning::WebView devtools socket not found ($SOCK) - skipping the panel-open back-press scenario"
+fi
+
 echo "--- full logcat saved as artifact regardless ---"
 exit $fail

@@ -82,10 +82,16 @@ jobs:
                   }
               }
 
+              // Call webView.goBack() directly rather than super.onBackPressed() -
+              // see android-apk.yml's MainActivity for why (super.onBackPressed()
+              // on a BridgeActivity isn't guaranteed to just navigate WebView
+              // history; it can finish() the Activity and orphan the native
+              // audio player, which a real report traced to backing out while a
+              // panel was open).
               @Override
               public void onBackPressed() {
                   if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
-                      super.onBackPressed();
+                      super.onBackPressed(); // TEMP: reverted to confirm the panel-open repro actually fails first
                   } else {
                       moveTaskToBack(true);
                   }
