@@ -106,4 +106,5 @@ jobs:
             notification_full.txt
             notification.txt
             services.txt
+            transport_logcat.txt
           if-no-files-found: ignore

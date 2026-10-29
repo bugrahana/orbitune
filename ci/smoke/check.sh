@@ -51,4 +51,17 @@ grep -qi "MediaSessionService" services.txt \
 grep -qi "isForeground=true" services.txt \
   || { echo "::error::The media session service is running but NOT as a foreground service - Android may kill it under memory pressure"; fail=1; }
 
+echo "--- transport control check: does a real media button press reach our JS action handler? ---"
+# This is what both the notification's buttons and a Bluetooth headset/hardware
+# button ultimately send - a system media key event routed to the active
+# session's MediaButtonReceiver. If this never reaches app.js, neither will a
+# tap on the notification.
+adb logcat -c
+adb shell input keyevent KEYCODE_MEDIA_PAUSE
+sleep 3
+adb logcat -d > transport_logcat.txt
+grep -q "SMOKE_ACTION_FIRED:pause" transport_logcat.txt \
+  || { echo "::error::Media button press (KEYCODE_MEDIA_PAUSE) never reached the setActionHandler('pause') callback - notification/hardware transport buttons are likely non-functional"; fail=1; }
+grep "SMOKE_ACTION_FIRED" transport_logcat.txt || true
+
 exit $fail

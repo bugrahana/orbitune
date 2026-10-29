@@ -16,6 +16,14 @@
     var MediaSession = Cap.Plugins && Cap.Plugins.MediaSession;
     if (!NativeAudio || !MediaSession) { log('plugins-missing'); return; }
 
+    // Registered so the smoke test can prove a real transport-control event
+    // (hardware/notification media button) actually reaches our JS code, not
+    // just that the notification/session exists and reports the right state.
+    try {
+      MediaSession.setActionHandler({ action: 'pause' }, function () { console.log('SMOKE_ACTION_FIRED:pause'); });
+      MediaSession.setActionHandler({ action: 'play' }, function () { console.log('SMOKE_ACTION_FIRED:play'); });
+    } catch (e) { console.log('SMOKE: setActionHandler threw: ' + (e && e.message)); }
+
     NativeAudio.configure({ focus: true, background: true, backgroundPlayback: true, showNotification: false })
       .then(function () {
         return NativeAudio.preload({ assetId: 'smoke', assetPath: 'assets/sounds/test.mp3', isUrl: false, volume: 1 });
