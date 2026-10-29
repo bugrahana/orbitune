@@ -57,15 +57,30 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\
               <uses-permission android:name="android.permission.WAKE_LOCK" />' AndroidManifest.xml
 
-      - name: Keep playback alive when backing out to the home screen
+      - name: Keep playback alive when backing out, request notification permission natively
         run: |
           mkdir -p android/app/src/main/java/com/orbitune/app
           cat > android/app/src/main/java/com/orbitune/app/MainActivity.java <<'EOF'
           package com.orbitune.app;
 
+          import android.Manifest;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
           import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  if (Build.VERSION.SDK_INT >= 33
+                      && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      ActivityCompat.requestPermissions(this, new String[] { Manifest.permission.POST_NOTIFICATIONS }, 1001);
+                  }
+              }
+
               @Override
               public void onBackPressed() {
                   if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {

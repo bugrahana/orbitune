@@ -484,11 +484,11 @@ const MediaSessionNative = isNative && Cap.Plugins ? Cap.Plugins.MediaSession : 
 const NATIVE_ASSET_ID = 'stream';
 const audio = NativeAudio ? null : $('audio');
 
-if (isNative && Cap.Plugins && Cap.Plugins.LocalNotifications) {
-  // Only real purpose: trigger the Android 13+ POST_NOTIFICATIONS prompt so the
-  // lock-screen/notification media controls are actually allowed to show.
-  Cap.Plugins.LocalNotifications.requestPermissions().catch(() => {});
-}
+// The Android 13+ POST_NOTIFICATIONS prompt (needed for the lock-screen/
+// notification media controls to be allowed to show) is requested natively
+// in MainActivity.onCreate() - not via @capacitor/local-notifications, which
+// would also pull in RECEIVE_BOOT_COMPLETED and SCHEDULE_EXACT_ALARM for
+// scheduling features this app never uses.
 
 let nativeReady = null;
 function ensureNative() {
