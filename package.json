@@ -7,9 +7,14 @@
     "android:add": "cap add android",
     "android:sync": "cap copy android"
   },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capgo/capacitor-media-session": "^8.1.6",
+    "@capgo/capacitor-native-audio": "^8.4.38"
+  },
   "devDependencies": {
-    "@capacitor/android": "^6.1.2",
-    "@capacitor/cli": "^6.1.2",
-    "@capacitor/core": "^6.1.2"
+    "@capacitor/cli": "^8.6.0"
   }
 }

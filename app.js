@@ -467,12 +467,60 @@ function blockStation(s) {
   renderAll();
 }
 
-/* ───────────────────────── player ───────────────────────── */
-const audio = $('audio');
+/* ───────────────────────── player ─────────────────────────
+   Two engines share the same `player` state and the same callers
+   (playStation/togglePlay/playNeighbour/sleep timer/stats):
+   - Native shell (Capacitor): @capgo/capacitor-native-audio for
+     playback that survives backgrounding, @capgo/capacitor-media-session
+     for the lock-screen/notification UI (play/pause/prev/next).
+   - Plain browser/PWA: the original <audio> element + Web MediaSession API.
+   Neither engine fires a DOM-style `error`/`waiting` event, so failure
+   detection on the native side is a watchdog on the `currentTime` ticks
+   instead (no tick within the window ⇒ treat like the old stall/timeout). */
+const Cap = window.Capacitor;
+const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
+const NativeAudio = isNative && Cap.Plugins ? Cap.Plugins.NativeAudio : null;
+const MediaSessionNative = isNative && Cap.Plugins ? Cap.Plugins.MediaSession : null;
+const NATIVE_ASSET_ID = 'stream';
+const audio = NativeAudio ? null : $('audio');
+
+if (isNative && Cap.Plugins && Cap.Plugins.LocalNotifications) {
+  // Only real purpose: trigger the Android 13+ POST_NOTIFICATIONS prompt so the
+  // lock-screen/notification media controls are actually allowed to show.
+  Cap.Plugins.LocalNotifications.requestPermissions().catch(() => {});
+}
+
+let nativeReady = null;
+function ensureNative() {
+  if (!NativeAudio) return Promise.resolve();
+  if (!nativeReady) {
+    nativeReady = NativeAudio.configure({
+      focus: true, background: true, backgroundPlayback: true, showNotification: false,
+    }).catch(() => {});
+  }
+  return nativeReady;
+}
+
+let watchdogTimer = null;
+function clearWatchdog() { clearTimeout(watchdogTimer); watchdogTimer = null; }
+function armWatchdog(ms, onTimeout) { clearWatchdog(); watchdogTimer = setTimeout(onTimeout, ms); }
+
+function setAudioVolume(v) {
+  if (NativeAudio) NativeAudio.setVolume({ assetId: NATIVE_ASSET_ID, volume: Math.max(0.1, v) }).catch(() => {});
+  else audio.volume = v;
+}
+
 const player = {
   station: null, queue: [], queueKind: 'list', history: [], status: 'idle', error: '', skipCount: 0, loadTimer: null,
   get playing() { return this.status === 'live' || this.status === 'loading'; },
-  stop() { audio.pause(); audio.removeAttribute('src'); audio.load(); this.status = 'idle'; render(); },
+  stop() {
+    clearTimeout(this.loadTimer);
+    clearWatchdog();
+    if (NativeAudio) { NativeAudio.stop({ assetId: NATIVE_ASSET_ID }).catch(() => {}); NativeAudio.unload({ assetId: NATIVE_ASSET_ID }).catch(() => {}); }
+    else { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+    this.status = 'idle';
+    render();
+  },
 };
 
 function setCurrent(s, queue) {
@@ -494,14 +542,23 @@ async function playStation(s, opts = {}) {
   player.status = 'loading';
   player.error = '';
   clearTimeout(player.loadTimer);
+  clearWatchdog();
   player.loadTimer = setTimeout(() => onStreamFail('timeout'), 15000);
   if (s.cc && s.cc !== state.country && opts.adoptCountry !== false) selectCountry(s.cc, { quiet: true });
   render();
-  audio.volume = 1;
   player.switching = true;
-  audio.src = s.url;
   try {
-    await audio.play();
+    if (NativeAudio) {
+      await ensureNative();
+      try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+      try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+      await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
+      await NativeAudio.play({ assetId: NATIVE_ASSET_ID });
+    } else {
+      audio.volume = 1;
+      audio.src = s.url;
+      await audio.play();
+    }
     player.switching = false;
   } catch (e) {
     player.switching = false;
@@ -517,6 +574,7 @@ async function playStation(s, opts = {}) {
 
 function onStreamFail() {
   clearTimeout(player.loadTimer);
+  clearWatchdog();
   if (player.status !== 'loading' && player.status !== 'live') return;
   const failed = player.station;
   if (state.autoSkip && player.skipCount < 3 && failed) {
@@ -529,25 +587,42 @@ function onStreamFail() {
       return;
     }
   }
-  audio.pause();
+  if (NativeAudio) NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+  else audio.pause();
   player.status = 'error';
   player.error = navigator.onLine === false ? t('error.network') : t('error.stream');
   render();
 }
 
-audio.addEventListener('playing', () => { clearTimeout(player.loadTimer); player.status = 'live'; player.skipCount = 0; render(); updateMediaSession(); });
-audio.addEventListener('waiting', () => { if (player.status === 'live') { player.status = 'loading'; render(); clearTimeout(player.loadTimer); player.loadTimer = setTimeout(() => onStreamFail('stall'), 20000); } });
-audio.addEventListener('error', () => { if (audio.getAttribute('src')) onStreamFail('error'); });
-audio.addEventListener('pause', () => { if (player.switching) return; if (player.status === 'live' || player.status === 'loading') { clearTimeout(player.loadTimer); player.status = 'paused'; render(); updateMediaSession(); } });
+if (NativeAudio) {
+  NativeAudio.addListener('currentTime', () => {
+    if (player.status !== 'loading' && player.status !== 'live') return;
+    clearTimeout(player.loadTimer);
+    if (player.status !== 'live') { player.status = 'live'; player.skipCount = 0; render(); updateMediaSession(); }
+    armWatchdog(20000, () => onStreamFail('stall'));
+  });
+  NativeAudio.addListener('complete', () => { if (player.status === 'live' || player.status === 'loading') onStreamFail('error'); });
+} else {
+  audio.addEventListener('playing', () => { clearTimeout(player.loadTimer); player.status = 'live'; player.skipCount = 0; render(); updateMediaSession(); });
+  audio.addEventListener('waiting', () => { if (player.status === 'live') { player.status = 'loading'; render(); clearTimeout(player.loadTimer); player.loadTimer = setTimeout(() => onStreamFail('stall'), 20000); } });
+  audio.addEventListener('error', () => { if (audio.getAttribute('src')) onStreamFail('error'); });
+  audio.addEventListener('pause', () => { if (player.switching) return; if (player.status === 'live' || player.status === 'loading') { clearTimeout(player.loadTimer); player.status = 'paused'; render(); updateMediaSession(); } });
+}
 
 function togglePlay() {
   if (!player.station) { shuffleCountry(); return; }
-  if (player.status === 'live' || player.status === 'loading') { audio.pause(); return; }
-  if (player.status === 'paused' && audio.getAttribute('src')) {
-    // Live radio: rejoin the live edge instead of resuming a stale buffer.
-    playStation(player.station, { queue: player.queue, adoptCountry: false });
+  if (player.status === 'live' || player.status === 'loading') {
+    if (NativeAudio) {
+      NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+      clearTimeout(player.loadTimer);
+      clearWatchdog();
+      player.status = 'paused';
+      render();
+      updateMediaSession();
+    } else audio.pause();
     return;
   }
+  // Live radio: rejoin the live edge instead of resuming a stale buffer.
   playStation(player.station, { queue: player.queue, adoptCountry: false });
 }
 
@@ -591,24 +666,38 @@ function shuffleCountry() {
 /* Media Session: lock screen + notification controls, including next/prev. */
 let msKey = '';
 function updateMediaSession() {
-  if (!('mediaSession' in navigator) || !player.station) return;
+  if (!player.station) return;
+  if (!NativeAudio && !('mediaSession' in navigator)) return;
   const s = player.station;
   const key = s.id + '|' + player.status + '|' + state.lang;
   if (key === msKey) return;
   msKey = key;
   const art = logoUrl(s);
-  try {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: s.name,
-      artist: [countryLabel(s.cc), genreOf(s)].filter(Boolean).join(' · '),
-      album: 'Orbitune',
-      artwork: art ? [{ src: art, sizes: '256x256' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
-                   : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
-    });
-    navigator.mediaSession.playbackState = player.status === 'live' || player.status === 'loading' ? 'playing' : 'paused';
-  } catch (_) {}
+  const artwork = art
+    ? [{ src: art, sizes: '256x256', type: 'image/png' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
+    : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
+  const title = s.name;
+  const artist = [countryLabel(s.cc), genreOf(s)].filter(Boolean).join(' · ');
+  const album = 'Orbitune';
+  const playbackState = player.status === 'live' || player.status === 'loading' ? 'playing' : 'paused';
+  if (MediaSessionNative) {
+    MediaSessionNative.setMetadata({ title, artist, album, artwork }).catch(() => {});
+    MediaSessionNative.setPlaybackState({ playbackState }).catch(() => {});
+  } else {
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album, artwork });
+      navigator.mediaSession.playbackState = playbackState;
+    } catch (_) {}
+  }
 }
-if ('mediaSession' in navigator) {
+if (MediaSessionNative) {
+  const set = (action, fn) => { MediaSessionNative.setActionHandler({ action }, () => fn()).catch(() => {}); };
+  set('play', () => togglePlay());
+  set('pause', () => togglePlay());
+  set('stop', () => togglePlay());
+  set('nexttrack', () => playNeighbour(1));
+  set('previoustrack', () => playNeighbour(-1));
+} else if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
   const set = (a, fn) => { try { ms.setActionHandler(a, fn); } catch (_) {} };
   set('play', () => togglePlay());
@@ -621,7 +710,7 @@ if ('mediaSession' in navigator) {
 /* listening stats */
 let statTick = 0;
 setInterval(() => {
-  if (player.status === 'live' && !audio.paused) {
+  if (player.status === 'live' && (NativeAudio || !audio.paused)) {
     state.listenSeconds++;
     if (++statTick % 15 === 0) save();
   }
@@ -631,7 +720,7 @@ setInterval(() => {
 const sleep = { endAt: 0, minutes: 0, timer: null };
 function setSleep(min) {
   clearInterval(sleep.timer);
-  audio.volume = 1;
+  setAudioVolume(1);
   sleep.minutes = min;
   sleep.endAt = min ? Date.now() + min * 60000 : 0;
   if (min) {
@@ -647,12 +736,17 @@ function sleepTick() {
   chip.hidden = false;
   const sec = Math.ceil(left / 1000);
   $('sleepChipText').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-  if (left < 20000) audio.volume = clamp(left / 20000, 0, 1);
+  if (left < 20000) setAudioVolume(clamp(left / 20000, 0, 1));
   if (left <= 0) {
     clearInterval(sleep.timer);
     sleep.endAt = 0; sleep.minutes = 0;
-    audio.pause();
-    audio.volume = 1;
+    if (NativeAudio) {
+      NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {});
+      clearTimeout(player.loadTimer);
+      clearWatchdog();
+      if (player.status === 'live' || player.status === 'loading') { player.status = 'paused'; render(); updateMediaSession(); }
+    } else audio.pause();
+    setAudioVolume(1);
     chip.hidden = true;
     toast(t('toast.sleepDone'));
   }
