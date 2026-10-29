@@ -1729,6 +1729,23 @@ async function boot() {
   if (state.lastStation && playable(state.lastStation)) {
     player.station = state.lastStation;
     player.status = 'idle';
+    // If the Activity/WebView got recreated while the native player was
+    // still actually going (an OEM killing/recreating it in the
+    // background is the leading theory), this fresh boot() has no idea -
+    // without this check the UI would show idle/not-playing over audio
+    // that's genuinely still live, and a later playStation() call (e.g.
+    // from shuffle) would start a SECOND stream on top of it instead of
+    // taking over the existing one. Same reconciliation the
+    // visibilitychange handler does below, just also needed here since a
+    // fresh boot is a separate code path from a resume.
+    if (NativeAudio) {
+      const genAtBoot = playGen;
+      NativeAudio.isPlaying({ assetId: NATIVE_ASSET_ID }).then((res) => {
+        if (genAtBoot !== playGen) return;
+        const reallyPlaying = !!(res && (res.isPlaying ?? res.value));
+        if (reallyPlaying) { player.status = 'live'; render(); updateMediaSession(); }
+      }).catch(() => {});
+    }
   }
   const shared = new URLSearchParams(location.search).get('s');
   if (shared) history.replaceState({ root: 1 }, '', location.pathname);

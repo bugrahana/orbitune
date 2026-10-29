@@ -52,6 +52,9 @@ jobs:
       - name: Run resume/visibility state-reconciliation test
         run: node ci/unit/resume-reconcile.test.js
 
+      - name: Run boot-time native-playback reconciliation test
+        run: node ci/unit/boot-reconcile.test.js
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:
@@ -108,10 +111,12 @@ jobs:
           import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
+              // Call webView.goBack() directly rather than super.onBackPressed() -
+              // see android-apk.yml's MainActivity for why.
               @Override
               public void onBackPressed() {
                   if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
-                      super.onBackPressed();
+                      getBridge().getWebView().goBack();
                   } else {
                       moveTaskToBack(true);
                   }

@@ -91,7 +91,7 @@ jobs:
               @Override
               public void onBackPressed() {
                   if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
-                      super.onBackPressed(); // TEMP: reverted to confirm the panel-open repro actually fails first
+                      getBridge().getWebView().goBack();
                   } else {
                       moveTaskToBack(true);
                   }

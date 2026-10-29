@@ -117,10 +117,22 @@ jobs:
               // no way for the next launch's fresh plugin instance to reach it. Mirror
               // the Home button instead: only actually go back if there's in-app
               // history (closing a sheet/panel) to go back to.
+              //
+              // Deliberately calling webView.goBack() directly here instead of
+              // super.onBackPressed() - a real report was that backing out while a
+              // panel (e.g. settings) was open still backgrounded/killed the app
+              // instead of just closing the panel. super.onBackPressed() on a
+              // BridgeActivity can route through Capacitor's own
+              // OnBackPressedDispatcher callback (or, if that's not registered,
+              // fall through to the plain Activity behaviour, which finishes()),
+              // neither of which is the one guaranteed outcome we actually want -
+              // navigate the WebView's own history back. goBack() can never finish
+              // the Activity, so the native audio player can never be orphaned by
+              // this path, panel open or not.
               @Override
               public void onBackPressed() {
                   if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
-                      super.onBackPressed();
+                      getBridge().getWebView().goBack();
                   } else {
                       moveTaskToBack(true);
                   }
