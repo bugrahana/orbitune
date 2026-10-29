@@ -408,21 +408,26 @@ function logoUrl(s) {
 // Radio Browser's own `favicon` field is empty/broken for a lot of
 // stations. Rather than fetch+parse each homepage's og:image (CORS would
 // block that from the plain-web build, and it'd need a request per
-// station), chain through public favicon-by-domain services derived from
-// the station's `homepage` field - images aren't subject to CORS the way
+// station), use a public favicon-by-domain service derived from the
+// station's `homepage` field - images aren't subject to CORS the way
 // fetch() is, so this works in both the native and plain-web builds with
-// no API key and no scraping: each is just another <img> that loads (or
+// no API key and no scraping: it's just another <img> that loads (or
 // fails) on its own. Not cached locally (deliberately, for now) - every
-// render asks fresh. Two services, tried in order, since neither alone
-// has full coverage (checked against real station homepages).
+// render asks fresh.
+//
+// Only google's s2/favicons is used here, NOT duckduckgo's icons.duckduckgo
+// service - tried that too, but it has the exact same "returns a generic
+// placeholder with HTTP 404 instead of actually failing" problem as google
+// (confirmed: byte-identical response for two different made-up domains),
+// and unlike google's always-16x16 generic (reliably rejected below by
+// size), duckduckgo's generic comes back at 48x48 - indistinguishable in
+// size from a real favicon, and CORS blocks reading its actual pixels or
+// HTTP status to tell them apart client-side. No reliable way to filter
+// it out, so better to not risk showing it at all.
 function homepageFaviconCandidates(s) {
   try {
     const host = new URL(s.homepage).hostname;
-    if (!host) return [];
-    return [
-      `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`,
-      `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico`,
-    ];
+    return host ? [`https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`] : [];
   } catch (_) { return []; }
 }
 function artHTML(s, cls = '') {
