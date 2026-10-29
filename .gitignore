@@ -5,3 +5,4 @@ ios/
 *.apk
 *.aab
 .DS_Store
+ci/smoke/web/assets/
