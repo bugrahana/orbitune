@@ -117,10 +117,15 @@ fi
 echo "App uid: ${APP_UID:-<unknown>}"
 adb logcat -c || true
 adb shell am start -n com.orbitune.smoketest/.MainActivity || true
-sleep 1
-
+# Generous margin: a cold app launch (WebView/Capacitor bridge init) can
+# itself take a couple of seconds, before the harness's own 2s pre-stress
+# delay even starts counting. Sample for a good while past when the
+# 12-switch mash should be done, rather than guess a tight window - the
+# first run of this test sampled an empty window entirely and "passed"
+# without actually checking anything.
+sleep 4
 rm -f overlap_samples.txt
-for i in $(seq 1 24); do
+for i in $(seq 1 40); do
   sleep 0.15
   echo "=== sample $i ===" >> overlap_samples.txt
   adb shell dumpsys audio >> overlap_samples.txt 2>&1 || true
@@ -130,8 +135,9 @@ adb logcat -d > stress_logcat.txt
 grep -q "SMOKE_STRESS_DONE" stress_logcat.txt \
   || echo "::warning::Stress sequence did not report completion in time - samples taken regardless"
 
-echo "--- dumpsys audio output format, first sample (for diagnosing the grep pattern if this ever needs adjusting) ---"
-sed -n '1,40p' overlap_samples.txt
+echo "--- all AudioPlaybackConfiguration lines seen across every sample (for diagnosing the grep pattern if this ever needs adjusting) ---"
+grep -c "^=== sample" overlap_samples.txt | xargs echo "sample count:"
+grep "AudioPlaybackConfiguration" overlap_samples.txt || echo "(none found in any sample at all)"
 
 if [ -z "$APP_UID" ]; then
   echo "::warning::Skipping the concurrency count - no uid to filter by (see warning above)"
