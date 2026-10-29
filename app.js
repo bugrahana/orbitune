@@ -691,7 +691,7 @@ function updateMediaSession() {
   }
 }
 if (MediaSessionNative) {
-  const set = (action, fn) => { MediaSessionNative.setActionHandler({ action }, () => fn()).catch(() => {}); };
+  const set = (action, fn) => { try { MediaSessionNative.setActionHandler({ action }, () => fn()); } catch (_) {} };
   set('play', () => togglePlay());
   set('pause', () => togglePlay());
   set('stop', () => togglePlay());
