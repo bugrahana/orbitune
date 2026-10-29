@@ -100,4 +100,49 @@ adb logcat -d > transport_logcat_after_back.txt
 grep -q "SMOKE_ACTION_FIRED:pause" transport_logcat_after_back.txt \
   || { echo "::error::Media button press after BACK never reached the JS action handler"; fail=1; }
 
+echo "--- ground-truth overlap stress test: rapid-mash station switching, sampled via dumpsys audio ---"
+# Not theory this time - relaunch fresh (the harness auto-runs a 12-switch
+# mash between two audibly distinct tones ~2s after boot, using the exact
+# same stop/unload/wait(120)/preload/play mutex as app.js), then repeatedly
+# sample dumpsys audio's live AudioPlaybackConfiguration list for this
+# app's uid while the mash is happening. If two native players are ever
+# genuinely active at once, this is where it shows up - not in logcat text.
+adb shell am force-stop com.orbitune.smoketest
+UID=$(adb shell dumpsys package com.orbitune.smoketest | grep -o 'userId=[0-9]*' | head -n1 | cut -d= -f2)
+echo "App uid: $UID"
+adb logcat -c
+adb shell am start -n com.orbitune.smoketest/.MainActivity
+
+rm -f overlap_samples.txt
+for i in $(seq 1 24); do
+  sleep 0.15
+  echo "=== sample $i ===" >> overlap_samples.txt
+  adb shell dumpsys audio >> overlap_samples.txt 2>&1 || true
+done
+
+adb logcat -d > stress_logcat.txt
+grep -q "SMOKE_STRESS_DONE" stress_logcat.txt \
+  || echo "::warning::Stress sequence did not report completion in time - samples taken regardless"
+
+echo "--- dumpsys audio output format, first sample (for diagnosing the grep pattern if this ever needs adjusting) ---"
+sed -n '1,40p' overlap_samples.txt
+
+MAX_CONCURRENT=0
+awk -v target_uid="$UID" '
+  /^=== sample/ { count=0 }
+  /AudioPlaybackConfiguration/ && $0 ~ ("uid:" target_uid "[^0-9]") && $0 ~ /state:started/ { count++ }
+  /^=== sample/ && NR>1 { print prev_count }
+  { prev_count = count }
+  END { print count }
+' overlap_samples.txt > /tmp/sample_counts.txt || true
+MAX_CONCURRENT=$(sort -n /tmp/sample_counts.txt | tail -n1)
+echo "Max concurrent 'started' AudioPlaybackConfiguration entries for uid=$UID across all samples: ${MAX_CONCURRENT:-0}"
+
+if [ -n "$MAX_CONCURRENT" ] && [ "$MAX_CONCURRENT" -gt 1 ]; then
+  echo "::error::CONFIRMED: $MAX_CONCURRENT simultaneous active audio playback configurations for this app's uid during rapid station switching - two native players really were active at once"
+  fail=1
+else
+  echo "OK: at most 1 active audio playback configuration for this app at any sampled moment during the rapid-switch stress test"
+fi
+
 exit $fail

@@ -73,11 +73,15 @@ jobs:
         working-directory: ci/smoke
         run: npm install
 
-      - name: Generate a short local test tone (no external stream dependency)
+      - name: Generate local test tones (no external stream dependency)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           mkdir -p ci/smoke/web/assets/sounds
           ffmpeg -f lavfi -i "sine=frequency=440:duration=3" -q:a 9 -acodec libmp3lame -y ci/smoke/web/assets/sounds/test.mp3
+          # Two audibly-distinct tones for the overlap stress test - if two
+          # of these ever play genuinely at once, dumpsys audio shows it.
+          ffmpeg -f lavfi -i "sine=frequency=440:duration=3" -q:a 9 -acodec libmp3lame -y ci/smoke/web/assets/sounds/toneA.mp3
+          ffmpeg -f lavfi -i "sine=frequency=880:duration=3" -q:a 9 -acodec libmp3lame -y ci/smoke/web/assets/sounds/toneB.mp3
 
       - name: Add Android platform
         working-directory: ci/smoke
@@ -154,4 +158,6 @@ jobs:
             notification_after_back.txt
             services_after_back.txt
             transport_logcat_after_back.txt
+            overlap_samples.txt
+            stress_logcat.txt
           if-no-files-found: ignore

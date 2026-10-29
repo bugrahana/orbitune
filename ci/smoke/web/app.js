@@ -35,6 +35,57 @@
       .catch(function (e) { log('error: ' + (e && e.message ? e.message : e)); });
   }
 
+  // Ground-truth overlap stress test: hammer the exact same
+  // stop->unload->wait(120)->preload->play mutex sequence app.js uses,
+  // alternating between two AUDIBLY DISTINCT tones on the SAME assetId,
+  // as fast as a user mashing next/prev would. If two native players ever
+  // end up genuinely active at once, dumpsys audio (sampled by check.sh
+  // while this runs) will show 2+ AudioPlaybackConfiguration entries for
+  // this app's uid - actual evidence, not theory.
+  function stressSwitchTest(NativeAudio) {
+    const ASSET_ID = 'stream';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    let nativeQueue = Promise.resolve();
+    function queueNative(task) {
+      const run = () => Promise.resolve().then(task);
+      const p = nativeQueue.then(run, run);
+      nativeQueue = p.catch(() => {});
+      return p;
+    }
+    let gen = 0;
+    async function switchTo(path) {
+      const myGen = ++gen;
+      await queueNative(async () => {
+        if (myGen !== gen) return;
+        try { await NativeAudio.stop({ assetId: ASSET_ID }); } catch (_) {}
+        try { await NativeAudio.unload({ assetId: ASSET_ID }); } catch (_) {}
+        await wait(120);
+        if (myGen !== gen) return;
+        await NativeAudio.preload({ assetId: ASSET_ID, assetPath: path, isUrl: false, volume: 1 });
+        if (myGen !== gen) {
+          try { await NativeAudio.stop({ assetId: ASSET_ID }); } catch (_) {}
+          try { await NativeAudio.unload({ assetId: ASSET_ID }); } catch (_) {}
+          return;
+        }
+        await NativeAudio.play({ assetId: ASSET_ID });
+      });
+    }
+    (async () => {
+      const tones = ['assets/sounds/toneA.mp3', 'assets/sounds/toneB.mp3'];
+      for (let i = 0; i < 12; i++) {
+        switchTo(tones[i % 2]); // deliberately NOT awaited - this is the mash
+        await wait(90);
+      }
+      await wait(500);
+      console.log('SMOKE_STRESS_DONE');
+    })();
+  }
+
   document.addEventListener('deviceready', boot);
   setTimeout(boot, 1000); // fallback in case deviceready already fired or never fires
+  setTimeout(() => {
+    const Cap = window.Capacitor;
+    const NativeAudio = Cap && Cap.Plugins && Cap.Plugins.NativeAudio;
+    if (NativeAudio) stressSwitchTest(NativeAudio);
+  }, 2000);
 })();
