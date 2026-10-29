@@ -93,7 +93,7 @@ SOCK="webview_devtools_remote_${PID}"
 if adb shell cat /proc/net/unix 2>/dev/null | grep -q "$SOCK"; then
   adb forward tcp:9333 localabstract:"$SOCK"
   sleep 1
-  if node ci/debug/push-history.js 9333; then
+  if timeout 20 node ci/debug/push-history.js 9333; then
     echo "OK: pushed an in-app history entry via CDP (simulating a panel being open)"
     adb forward --remove tcp:9333 || true
 

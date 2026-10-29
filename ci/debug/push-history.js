@@ -18,19 +18,32 @@
  */
 const http = require('http');
 
-function getJson(url) {
+// Hard safety net: a hung adb forward / unresponsive emulator must never
+// hang the whole CI job (it already did once - 20+ minutes stuck with no
+// progress, because nothing here had a timeout). No single step below
+// should take anywhere near this long; if it does, something's wedged and
+// the right move is to fail fast, not wait forever.
+const hardTimeout = setTimeout(() => {
+  console.error('push-history failed: hard timeout (15s) - something is hung, failing fast instead of blocking the job');
+  process.exit(1);
+}, 15000);
+hardTimeout.unref?.();
+
+function getJson(url, timeoutMs) {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
+    const req = http.get(url, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
       res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error(`GET ${url} timed out after ${timeoutMs}ms`)); });
   });
 }
 
 (async () => {
   const port = process.argv[2] || '9333';
-  const pages = await getJson(`http://localhost:${port}/json`);
+  const pages = await getJson(`http://localhost:${port}/json`, 5000);
   const page = pages.find((p) => p.url && /^https?:\/\//.test(p.url)) || pages[0];
   if (!page || !page.webSocketDebuggerUrl) {
     console.error('No inspectable WebView page with a debugger URL found:', JSON.stringify(pages));
@@ -38,12 +51,13 @@ function getJson(url) {
   }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
-    ws.addEventListener('open', resolve);
-    ws.addEventListener('error', (e) => reject(new Error('WebSocket error: ' + (e.message || e))));
+    const timer = setTimeout(() => reject(new Error('WebSocket open timed out after 5s')), 5000);
+    ws.addEventListener('open', () => { clearTimeout(timer); resolve(); });
+    ws.addEventListener('error', (e) => { clearTimeout(timer); reject(new Error('WebSocket error: ' + (e.message || e))); });
   });
   const id = 1;
   const result = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Runtime.evaluate timed out')), 5000);
+    const timer = setTimeout(() => reject(new Error('Runtime.evaluate timed out after 5s')), 5000);
     ws.addEventListener('message', (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.id === id) { clearTimeout(timer); resolve(msg); }
@@ -56,6 +70,7 @@ function getJson(url) {
   });
   ws.close();
   console.log('Runtime.evaluate result:', JSON.stringify(result));
+  clearTimeout(hardTimeout);
   if (result.exceptionDetails || result.error) {
     console.error('pushState call failed');
     process.exit(1);
