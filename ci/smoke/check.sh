@@ -108,9 +108,11 @@ echo "--- ground-truth overlap stress test: rapid-mash station switching, sample
 # app's uid while the mash is happening. If two native players are ever
 # genuinely active at once, this is where it shows up - not in logcat text.
 adb shell am force-stop com.orbitune.smoketest || true
-APP_UID=$(adb shell dumpsys package com.orbitune.smoketest 2>/dev/null | grep -o 'userId=[0-9]*' | head -n1 | cut -d= -f2 || true)
+echo "--- pm list packages -U output (for diagnosing the uid-lookup pattern if this ever needs adjusting) ---"
+adb shell pm list packages -U 2>&1 | grep -i smoketest || true
+APP_UID=$(adb shell pm list packages -U 2>/dev/null | grep "com.orbitune.smoketest" | grep -o 'uid:[0-9]*' | head -n1 | cut -d: -f2 || true)
 if [ -z "$APP_UID" ]; then
-  echo "::warning::Could not determine the app's uid via dumpsys package - falling back to matching by package name only"
+  echo "::warning::Could not determine the app's uid via pm list packages -U - falling back to matching by package name only"
 fi
 echo "App uid: ${APP_UID:-<unknown>}"
 adb logcat -c || true
