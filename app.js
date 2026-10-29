@@ -405,12 +405,36 @@ function logoUrl(s) {
   if (!f || f.startsWith('data:')) return '';
   return f.replace(/^http:\/\//i, 'https://');
 }
+// Radio Browser's own `favicon` field is empty/broken for a lot of
+// stations. Rather than fetch+parse each homepage's og:image (CORS would
+// block that from the plain-web build, and it'd need a request per
+// station), use a public favicon-by-domain service as a second <img src> -
+// images aren't subject to CORS the way fetch() is, so this works in both
+// the native and plain-web builds with no API key, no scraping, and no
+// extra request logic: it's just another <img> that loads (or 404s) on
+// its own, same as the primary one. Not cached locally (deliberately, for
+// now) - every render asks the service fresh.
+function homepageFaviconUrl(s) {
+  try {
+    const host = new URL(s.homepage).hostname;
+    return host ? `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}` : '';
+  } catch (_) { return ''; }
+}
 function artHTML(s, cls = '') {
   const src = logoUrl(s);
+  const fallback = homepageFaviconUrl(s);
   const h = hash(s.id || s.name) % 360;
-  return `<span class="art ${cls}" style="--h:${h}">${esc(initials(s.name))}${src ? `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>` : ''}</span>`;
+  let img = '';
+  if (src) img = `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback${fallback ? ` data-fallback-src="${esc(fallback)}"` : ''}>`;
+  else if (fallback) img = `<img src="${esc(fallback)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback>`;
+  return `<span class="art ${cls}" style="--h:${h}">${esc(initials(s.name))}${img}</span>`;
 }
-document.addEventListener('error', (e) => { const el = e.target; if (el && el.tagName === 'IMG' && el.hasAttribute('data-fallback')) el.remove(); }, true);
+document.addEventListener('error', (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== 'IMG' || !el.hasAttribute('data-fallback')) return;
+  const next = el.dataset.fallbackSrc;
+  if (next) { el.removeAttribute('data-fallback-src'); el.src = next; } else { el.remove(); }
+}, true);
 
 /* ───────────────────────── library ───────────────────────── */
 const isFav = (id) => state.favorites.some((s) => s.id === id);
@@ -754,7 +778,7 @@ function updateMediaSession() {
   const key = s.id + '|' + player.status + '|' + state.lang;
   if (key === msKey) return;
   msKey = key;
-  const art = logoUrl(s);
+  const art = logoUrl(s) || homepageFaviconUrl(s);
   const artwork = art
     ? [{ src: art, sizes: '256x256', type: 'image/png' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
     : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
@@ -983,10 +1007,21 @@ function paintLabel(s) {
   labelFor = key;
   const img = $('discLogo');
   const src = s ? logoUrl(s) : '';
+  const fallback = s ? homepageFaviconUrl(s) : '';
   img.hidden = true;
   img.onload = () => { if (labelFor === key) img.hidden = false; };
-  img.onerror = () => { img.hidden = true; };
-  if (src) img.src = src; else img.removeAttribute('src');
+  img.onerror = () => {
+    if (img.dataset.fallbackSrc) {
+      const next = img.dataset.fallbackSrc;
+      delete img.dataset.fallbackSrc;
+      img.src = next;
+    } else {
+      img.hidden = true;
+    }
+  };
+  if (src) { if (fallback) img.dataset.fallbackSrc = fallback; img.src = src; }
+  else if (fallback) { delete img.dataset.fallbackSrc; img.src = fallback; }
+  else img.removeAttribute('src');
 }
 function paintDial(s) {
   if (!state.modules.dial) return;
