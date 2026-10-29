@@ -36,6 +36,9 @@ jobs:
       - name: Run display/state pure-logic tests
         run: node ci/unit/display-and-state.test.js
 
+      - name: Run data-integrity pure-logic tests
+        run: node ci/unit/data-integrity.test.js
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:

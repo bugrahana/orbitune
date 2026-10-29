@@ -71,6 +71,15 @@ else
   fail=1
 fi
 
+MANUFACTURER=$(adb shell getprop ro.product.manufacturer | tr -d '\r')
+echo "Emulator manufacturer: $MANUFACTURER"
+if grep -qE "com\.miui\.securitycenter|com\.huawei\.systemmanager|com\.coloros\.safecenter|com\.oppo\.safe|com\.vivo\.permissionmanager|com\.iqoo\.secure|com\.letv\.android\.letvsafe|com\.asus\.mobilemanager|com\.meizu\.safe" full_logcat.txt; then
+  echo "::error::An OEM-specific autostart screen was attempted on a non-matching manufacturer ($MANUFACTURER) - isKnownAggressiveOem() is misfiring"
+  fail=1
+else
+  echo "OK: no OEM-specific autostart screen was attempted on this ($MANUFACTURER) emulator, as expected"
+fi
+
 echo "--- one-time-prompt check: a fresh process launch must NOT ask again ---"
 adb shell am force-stop com.orbitune.app
 adb logcat -c
