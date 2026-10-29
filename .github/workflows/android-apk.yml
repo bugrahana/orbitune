@@ -77,9 +77,13 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Locate APK
+      - name: Rename APK
         id: apk
-        run: echo "path=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -n1)" >> "$GITHUB_OUTPUT"
+        run: |
+          SRC=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -n1)
+          DEST="android/app/build/outputs/apk/debug/Orbitune-${{ steps.version.outputs.tag }}.apk"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
