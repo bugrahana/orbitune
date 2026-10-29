@@ -43,7 +43,13 @@
   // while this runs) will show 2+ AudioPlaybackConfiguration entries for
   // this app's uid - actual evidence, not theory.
   function stressSwitchTest(NativeAudio) {
-    const ASSET_ID = 'stream';
+    // Deliberately the SAME assetId boot() already preloaded/looped above -
+    // the real app only ever has one NATIVE_ASSET_ID ('stream'). Using a
+    // different id here would let boot()'s own tone keep playing
+    // independently alongside this test's tones, which would show up in
+    // dumpsys audio as "2 concurrent started" for a reason that has
+    // nothing to do with the switching race this test exists to catch.
+    const ASSET_ID = 'smoke';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     let nativeQueue = Promise.resolve();
     function queueNative(task) {

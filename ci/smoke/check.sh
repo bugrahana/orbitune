@@ -142,9 +142,11 @@ grep "AudioPlaybackConfiguration" overlap_samples.txt || echo "(none found in an
 if [ -z "$APP_UID" ]; then
   echo "::warning::Skipping the concurrency count - no uid to filter by (see warning above)"
 else
+  # Real dumpsys audio (API 34 emulator) prints the owner as "u/pid:<uid>/<pid>",
+  # not "uid:<uid>" - confirmed from an actual run's raw output, not assumed.
   awk -v target_uid="$APP_UID" '
     /^=== sample/ { count=0 }
-    /AudioPlaybackConfiguration/ && $0 ~ ("uid:" target_uid "[^0-9]") && $0 ~ /state:started/ { count++ }
+    /AudioPlaybackConfiguration/ && $0 ~ ("u/pid:" target_uid "/") && $0 ~ /state:started/ { count++ }
     /^=== sample/ && NR>1 { print prev_count }
     { prev_count = count }
     END { print count }
