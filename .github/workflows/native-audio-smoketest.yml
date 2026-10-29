@@ -49,6 +49,9 @@ jobs:
       - name: Run dom-boot crash test (real index.html + app.js + facts.js + pets.js in jsdom)
         run: node ci/unit/dom-boot.test.js
 
+      - name: Run resume/visibility state-reconciliation test
+        run: node ci/unit/resume-reconcile.test.js
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:

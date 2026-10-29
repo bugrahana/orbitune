@@ -635,6 +635,30 @@ if (NativeAudio) {
     armWatchdog(20000, () => onStreamFail('stall'));
   });
   NativeAudio.addListener('complete', () => { if (player.status === 'live' || player.status === 'loading') onStreamFail('error'); });
+
+  // If the JS-side state ever drifts from what's actually playing natively
+  // (an OEM killing/restarting the process in the background is the usual
+  // trigger - the user sees "not playing" on reopen while the native layer
+  // kept going, or vice versa), re-sync on every resume instead of leaving
+  // a stale UI until the next explicit play/pause tap.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !player.station) return;
+    NativeAudio.isPlaying({ assetId: NATIVE_ASSET_ID }).then((res) => {
+      const reallyPlaying = !!(res && (res.isPlaying ?? res.value));
+      if (reallyPlaying && player.status !== 'live' && player.status !== 'loading') {
+        clearTimeout(player.loadTimer);
+        player.status = 'live';
+        render();
+        updateMediaSession();
+      } else if (!reallyPlaying && (player.status === 'live' || player.status === 'loading')) {
+        clearTimeout(player.loadTimer);
+        clearWatchdog();
+        player.status = 'paused';
+        render();
+        updateMediaSession();
+      }
+    }).catch(() => {});
+  });
 } else {
   audio.addEventListener('playing', () => { clearTimeout(player.loadTimer); player.status = 'live'; player.skipCount = 0; render(); updateMediaSession(); });
   audio.addEventListener('waiting', () => { if (player.status === 'live') { player.status = 'loading'; render(); clearTimeout(player.loadTimer); player.loadTimer = setTimeout(() => onStreamFail('stall'), 20000); } });
