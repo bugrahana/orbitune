@@ -1,7 +1,20 @@
-name: Debug Real App Logcat
+name: Real App Crash & Lifecycle Test
 
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - 'main'
+      - 'feature/**'
+    paths:
+      - 'app.js'
+      - 'index.html'
+      - 'facts.js'
+      - 'pets.js'
+      - 'package.json'
+      - 'capacitor.config.json'
+      - 'ci/debug/**'
+      - '.github/workflows/debug-logcat.yml'
 
 jobs:
   debug:

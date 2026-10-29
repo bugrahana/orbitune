@@ -16,7 +16,7 @@ on:
 
 jobs:
   # Fast, no emulator needed - runs in parallel with smoke-test below.
-  playback-mutex-unit-test:
+  pure-logic-unit-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,6 +29,12 @@ jobs:
 
       - name: Run playback mutex regression test
         run: node ci/unit/playback-mutex.test.js
+
+      - name: Run station/navigation pure-logic tests
+        run: node ci/unit/pure-logic.test.js
+
+      - name: Run display/state pure-logic tests
+        run: node ci/unit/display-and-state.test.js
 
   smoke-test:
     runs-on: ubuntu-latest

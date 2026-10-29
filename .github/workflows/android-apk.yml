@@ -133,6 +133,28 @@ jobs:
           grep -q "MediaSessionService" /tmp/manifest-dump.txt || { echo "::error::MediaSessionService not found in merged manifest"; fail=1; }
           exit $fail
 
+      - name: Audit the exact permission set (no silent additions from a plugin update)
+        run: |
+          grep -o 'android:name(0x01010003)="android\.permission\.[A-Za-z_.]*"' /tmp/manifest-dump.txt \
+            | sed -E 's/.*"(android\.permission\.[A-Za-z_.]*)"/\1/' | sort -u > /tmp/actual-permissions.txt
+          echo "--- permissions present in the merged manifest ---"
+          cat /tmp/actual-permissions.txt
+          cat > /tmp/allowed-permissions.txt <<'EOF'
+          android.permission.FOREGROUND_SERVICE
+          android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK
+          android.permission.INTERNET
+          android.permission.POST_NOTIFICATIONS
+          android.permission.WAKE_LOCK
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/allowed-permissions.txt
+          sort -u /tmp/allowed-permissions.txt -o /tmp/allowed-permissions.txt
+          echo "--- diff vs the expected set (< missing, > unexpected) ---"
+          if ! diff /tmp/allowed-permissions.txt /tmp/actual-permissions.txt; then
+            echo "::error::Permission set changed - a plugin update added or removed a permission. Review and update the allowlist in this workflow step deliberately."
+            exit 1
+          fi
+          echo "Permission set matches exactly what's expected."
+
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
