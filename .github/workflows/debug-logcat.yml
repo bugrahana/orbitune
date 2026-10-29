@@ -44,6 +44,26 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\
               <uses-permission android:name="android.permission.WAKE_LOCK" />' AndroidManifest.xml
 
+      - name: Keep playback alive when backing out to the home screen
+        run: |
+          mkdir -p android/app/src/main/java/com/orbitune/app
+          cat > android/app/src/main/java/com/orbitune/app/MainActivity.java <<'EOF'
+          package com.orbitune.app;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onBackPressed() {
+                  if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
+                      super.onBackPressed();
+                  } else {
+                      moveTaskToBack(true);
+                  }
+              }
+          }
+          EOF
+
       - name: Build debug APK
         working-directory: android
         run: |
@@ -75,4 +95,5 @@ jobs:
           path: |
             full_logcat.txt
             filtered_logcat.txt
+            after_reopen_logcat.txt
           if-no-files-found: ignore

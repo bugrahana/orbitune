@@ -79,6 +79,33 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK" />' AndroidManifest.xml
           grep -E "FOREGROUND_SERVICE_MEDIA_PLAYBACK|WAKE_LOCK" AndroidManifest.xml
 
+      - name: Keep playback alive when backing out to the home screen
+        run: |
+          mkdir -p android/app/src/main/java/com/orbitune/app
+          cat > android/app/src/main/java/com/orbitune/app/MainActivity.java <<'EOF'
+          package com.orbitune.app;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              // Default Capacitor behaviour finishes (destroys) the Activity when the
+              // back button is pressed at the root screen. That tears down app.js and
+              // every JS-side plugin instance while the native audio player (which
+              // isn't tied to the Activity) keeps playing - leaving it orphaned, with
+              // no way for the next launch's fresh plugin instance to reach it. Mirror
+              // the Home button instead: only actually go back if there's in-app
+              // history (closing a sheet/panel) to go back to.
+              @Override
+              public void onBackPressed() {
+                  if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
+                      super.onBackPressed();
+                  } else {
+                      moveTaskToBack(true);
+                  }
+              }
+          }
+          EOF
+
       - name: Build debug APK
         working-directory: android
         run: |
