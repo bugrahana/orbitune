@@ -530,8 +530,10 @@ function setCurrent(s, queue) {
   save();
 }
 
+let playGen = 0;
 async function playStation(s, opts = {}) {
   if (!s) return;
+  const gen = ++playGen;
   if (!opts.isSkip) player.skipCount = 0;
   if (!opts.fromHistory && player.station && player.station.id !== s.id) {
     player.history.push(player.station);
@@ -559,8 +561,10 @@ async function playStation(s, opts = {}) {
       audio.src = s.url;
       await audio.play();
     }
+    if (gen !== playGen) return;    // a newer playStation() call already took over
     player.switching = false;
   } catch (e) {
+    if (gen !== playGen) return;    // ditto - don't let an abandoned attempt fail the new one
     player.switching = false;
     if (e && e.name === 'AbortError') return;          // superseded by a newer play
     if (e && e.name === 'NotAllowedError') { clearTimeout(player.loadTimer); player.status = 'ready'; render(); return; }
@@ -1664,7 +1668,7 @@ async function boot() {
       }
     } catch (_) {}
   }
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if (!isNative && 'serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }
