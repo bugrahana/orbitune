@@ -79,7 +79,9 @@ jobs:
           disable-animations: true
           script: |
             set -e
-            APK=$(find ci/smoke/android/app/build/outputs/apk/debug -name '*.apk' | head -n1)
+            echo "pwd: $(pwd)"
+            ls -la ci/smoke/android/app/build/outputs/apk/debug/ || echo "that path does not exist"
+            APK=$(find "$GITHUB_WORKSPACE" -name '*.apk' | head -n1)
             echo "Installing $APK"
             adb install -r "$APK"
 
