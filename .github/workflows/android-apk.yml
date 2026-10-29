@@ -37,11 +37,39 @@ jobs:
           cp index.html styles.css app.js facts.js pets.js manifest.webmanifest sw.js www/
           cp icons/*.png www/icons/
 
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RAW="${{ github.ref_name }}"
+            NAME="${RAW#v}"
+            TAG="${RAW}"
+            TITLE="Orbitune v${NAME}"
+            PRERELEASE=false
+          else
+            NAME="0.0.0-dev.${{ github.run_number }}"
+            TAG="dev-${{ github.run_number }}"
+            TITLE="Orbitune dev build ${{ github.run_number }}"
+            PRERELEASE=true
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
       - name: Add Android platform
         run: npx cap add android
 
       - name: Sync web assets into Android project
         run: npx cap copy android
+
+      - name: Set app version
+        working-directory: android/app
+        run: |
+          sed -i "s/versionCode [0-9]\+/versionCode ${{ steps.version.outputs.code }}/" build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.name }}\"/" build.gradle
+          grep -E "versionCode|versionName" build.gradle
 
       - name: Build debug APK
         working-directory: android
@@ -53,19 +81,10 @@ jobs:
         id: apk
         run: echo "path=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -n1)" >> "$GITHUB_OUTPUT"
 
-      - name: Determine release tag
-        id: tag
-        run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Orbitune ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.title }}
           files: ${{ steps.apk.outputs.path }}
-          prerelease: ${{ github.ref_type != 'tag' }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
