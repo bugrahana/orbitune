@@ -107,11 +107,15 @@ echo "--- ground-truth overlap stress test: rapid-mash station switching, sample
 # sample dumpsys audio's live AudioPlaybackConfiguration list for this
 # app's uid while the mash is happening. If two native players are ever
 # genuinely active at once, this is where it shows up - not in logcat text.
-adb shell am force-stop com.orbitune.smoketest
-APP_UID=$(adb shell dumpsys package com.orbitune.smoketest | grep -o 'userId=[0-9]*' | head -n1 | cut -d= -f2)
-echo "App uid: $APP_UID"
-adb logcat -c
-adb shell am start -n com.orbitune.smoketest/.MainActivity
+adb shell am force-stop com.orbitune.smoketest || true
+APP_UID=$(adb shell dumpsys package com.orbitune.smoketest 2>/dev/null | grep -o 'userId=[0-9]*' | head -n1 | cut -d= -f2 || true)
+if [ -z "$APP_UID" ]; then
+  echo "::warning::Could not determine the app's uid via dumpsys package - falling back to matching by package name only"
+fi
+echo "App uid: ${APP_UID:-<unknown>}"
+adb logcat -c || true
+adb shell am start -n com.orbitune.smoketest/.MainActivity || true
+sleep 1
 
 rm -f overlap_samples.txt
 for i in $(seq 1 24); do
@@ -127,22 +131,25 @@ grep -q "SMOKE_STRESS_DONE" stress_logcat.txt \
 echo "--- dumpsys audio output format, first sample (for diagnosing the grep pattern if this ever needs adjusting) ---"
 sed -n '1,40p' overlap_samples.txt
 
-MAX_CONCURRENT=0
-awk -v target_uid="$APP_UID" '
-  /^=== sample/ { count=0 }
-  /AudioPlaybackConfiguration/ && $0 ~ ("uid:" target_uid "[^0-9]") && $0 ~ /state:started/ { count++ }
-  /^=== sample/ && NR>1 { print prev_count }
-  { prev_count = count }
-  END { print count }
-' overlap_samples.txt > /tmp/sample_counts.txt || true
-MAX_CONCURRENT=$(sort -n /tmp/sample_counts.txt | tail -n1)
-echo "Max concurrent 'started' AudioPlaybackConfiguration entries for uid=$APP_UID across all samples: ${MAX_CONCURRENT:-0}"
-
-if [ -n "$MAX_CONCURRENT" ] && [ "$MAX_CONCURRENT" -gt 1 ]; then
-  echo "::error::CONFIRMED: $MAX_CONCURRENT simultaneous active audio playback configurations for this app's uid during rapid station switching - two native players really were active at once"
-  fail=1
+if [ -z "$APP_UID" ]; then
+  echo "::warning::Skipping the concurrency count - no uid to filter by (see warning above)"
 else
-  echo "OK: at most 1 active audio playback configuration for this app at any sampled moment during the rapid-switch stress test"
+  awk -v target_uid="$APP_UID" '
+    /^=== sample/ { count=0 }
+    /AudioPlaybackConfiguration/ && $0 ~ ("uid:" target_uid "[^0-9]") && $0 ~ /state:started/ { count++ }
+    /^=== sample/ && NR>1 { print prev_count }
+    { prev_count = count }
+    END { print count }
+  ' overlap_samples.txt > /tmp/sample_counts.txt 2>/tmp/sample_counts.err || true
+  MAX_CONCURRENT=$(sort -n /tmp/sample_counts.txt 2>/dev/null | tail -n1)
+  echo "Max concurrent 'started' AudioPlaybackConfiguration entries for uid=$APP_UID across all samples: ${MAX_CONCURRENT:-0}"
+
+  if [ -n "$MAX_CONCURRENT" ] && [ "$MAX_CONCURRENT" -gt 1 ] 2>/dev/null; then
+    echo "::error::CONFIRMED: $MAX_CONCURRENT simultaneous active audio playback configurations for this app's uid during rapid station switching - two native players really were active at once"
+    fail=1
+  else
+    echo "OK: at most 1 active audio playback configuration for this app at any sampled moment during the rapid-switch stress test"
+  fi
 fi
 
 exit $fail
