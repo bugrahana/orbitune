@@ -39,6 +39,46 @@ function makeFakeNativeAudio(log) {
   };
 }
 
+// Models a real, confirmed bug in @capgo/capacitor-native-audio's Android
+// implementation: unload()'s JS promise resolves as soon as it's posted to
+// the UI thread, NOT once the actual player.release() (which runs later,
+// whenever that thread gets to it) has finished - see StreamAudioAsset.java
+// unload()/NativeAudio.java's unload() plugin method. `wait(120)` in
+// app.js after unload() is the defensive mitigation; this fake models the
+// gap that mitigation exists for, so removing it should make this scenario
+// fail.
+function makeFakeNativeAudioWithSlowRelease(log) {
+  let loaded = null;
+  let playing = null;
+  let trulyReleased = true;
+  return {
+    async stop() { log.push(['stop', playing]); playing = null; await delay(5); },
+    unload() {
+      log.push(['unload-resolves', loaded]);
+      trulyReleased = false;
+      const releasing = loaded;
+      loaded = null;
+      setTimeout(() => { trulyReleased = true; log.push(['unload-actually-finished', releasing]); }, 80);
+      return Promise.resolve(); // resolves immediately - that's the real bug
+    },
+    async preload(assetPath) {
+      await delay(10);
+      if (!trulyReleased) {
+        throw new Error(`preload("${assetPath}") called while the previous asset was still mid-teardown natively - OVERLAP WINDOW BUG`);
+      }
+      loaded = assetPath;
+      log.push(['preload', assetPath]);
+    },
+    async play() {
+      await delay(5);
+      if (playing) throw new Error(`play() called while "${playing}" was already playing - OVERLAP BUG`);
+      playing = loaded;
+      log.push(['play', playing]);
+    },
+    getPlaying() { return playing; },
+  };
+}
+
 // --- exact copy of the mutex pattern from app.js (playStation's native branch) ---
 function makePlayer(NativeAudio) {
   let nativeQueue = Promise.resolve();
@@ -55,6 +95,7 @@ function makePlayer(NativeAudio) {
       if (gen !== playGen) return;
       try { await NativeAudio.stop(); } catch (_) {}
       try { await NativeAudio.unload(); } catch (_) {}
+      await delay(120); // mirrors the wait(120) defensive delay in app.js
       if (gen !== playGen) return;
       await NativeAudio.preload(stationId);
       if (gen !== playGen) {
@@ -121,11 +162,32 @@ async function scenarioSequentialIsUnaffected() {
   return failures;
 }
 
+async function scenarioSurvivesSlowNativeRelease() {
+  // Sequential (not even racing) station switch, but against the fake that
+  // models unload()'s real early-resolve bug - this is what the wait(120)
+  // in app.js exists to survive. Without it, preload() would fire while
+  // the previous asset is still natively mid-teardown.
+  const log = [];
+  const fake = makeFakeNativeAudioWithSlowRelease(log);
+  const player = makePlayer(fake);
+
+  await player.playStation('A');
+  await player.playStation('B');
+  await delay(150);
+
+  const plays = log.filter((e) => e[0] === 'play');
+  const failures = [];
+  if (plays.length !== 2) failures.push(`expected both switches to eventually play cleanly, got ${JSON.stringify(log)}`);
+  if (fake.getPlaying() !== 'B') failures.push(`expected B to end up playing, got ${fake.getPlaying()}`);
+  return failures;
+}
+
 async function main() {
   const scenarios = {
     'rapid double-tap never double-plays': scenarioDoubleTap,
     'rapid triple-tap only plays the last station': scenarioTripleTap,
     'normal sequential switches still both play': scenarioSequentialIsUnaffected,
+    'survives capacitor-native-audio\'s slow/early-resolving unload()': scenarioSurvivesSlowNativeRelease,
   };
 
   let allFailures = [];

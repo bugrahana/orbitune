@@ -517,6 +517,7 @@ function setAudioVolume(v) {
 // together, and pause/stop only ever reaching one of them). Every call that
 // mutates native playback goes through this queue so they always run one at
 // a time, in order.
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let nativeQueue = Promise.resolve();
 function queueNative(task) {
   const run = () => Promise.resolve().then(task);
@@ -537,6 +538,7 @@ const player = {
       queueNative(async () => {
         try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
         try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+        await wait(120); // see the long comment in playStation() below
       });
     } else { audio.pause(); audio.removeAttribute('src'); audio.load(); }
     this.status = 'idle';
@@ -576,6 +578,16 @@ async function playStation(s, opts = {}) {
         if (gen !== playGen) return;    // superseded while waiting in the native queue
         try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
         try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+        // @capgo/capacitor-native-audio's unload() resolves its JS promise
+        // before the actual native teardown (player.release(), posted via
+        // runOnUiThread in StreamAudioAsset.unload()) has necessarily run -
+        // confirmed by reading the plugin's Android source. If the UI
+        // thread is busy (an Activity pause/resume is a classic time for
+        // that), the old ExoPlayer can still be mid-teardown when we ask
+        // for a new one on the same assetId, which is exactly the kind of
+        // window that produces "a radio is still playing in the
+        // background" after switching/backgrounding. Give it a moment.
+        await wait(120);
         if (gen !== playGen) return;
         await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
         if (gen !== playGen) {          // superseded while preloading - undo, don't play it
@@ -620,8 +632,10 @@ function onStreamFail() {
       return;
     }
   }
-  if (NativeAudio) queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
-  else audio.pause();
+  if (NativeAudio) {
+    const gen = playGen;
+    queueNative(() => { if (gen !== playGen) return; return NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}); });
+  } else audio.pause();
   player.status = 'error';
   player.error = navigator.onLine === false ? t('error.network') : t('error.stream');
   render();
@@ -680,7 +694,8 @@ function togglePlay() {
   if (player.status === 'live' || player.status === 'loading') {
     if (NativeAudio) {
       playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
-      queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
+      const gen = playGen;
+      queueNative(() => { if (gen !== playGen) return; return NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}); });
       clearTimeout(player.loadTimer);
       clearWatchdog();
       player.status = 'paused';
@@ -809,7 +824,8 @@ function sleepTick() {
     sleep.endAt = 0; sleep.minutes = 0;
     if (NativeAudio) {
       playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
-      queueNative(() => NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}));
+      const gen = playGen;
+      queueNative(() => { if (gen !== playGen) return; return NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}); });
       clearTimeout(player.loadTimer);
       clearWatchdog();
       if (player.status === 'live' || player.status === 'loading') { player.status = 'paused'; render(); updateMediaSession(); }
