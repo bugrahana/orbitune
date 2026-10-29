@@ -4,15 +4,32 @@ on:
   workflow_dispatch: {}
   push:
     branches:
+      - 'main'
       - 'feature/**'
     paths:
       - 'ci/smoke/**'
+      - 'ci/unit/**'
       - 'app.js'
       - 'package.json'
       - 'capacitor.config.json'
       - '.github/workflows/native-audio-smoketest.yml'
 
 jobs:
+  # Fast, no emulator needed - runs in parallel with smoke-test below.
+  playback-mutex-unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run playback mutex regression test
+        run: node ci/unit/playback-mutex.test.js
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:
