@@ -36,6 +36,7 @@ jobs:
 
       - name: Generate a short local test tone (no external stream dependency)
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           mkdir -p ci/smoke/web/assets/sounds
           ffmpeg -f lavfi -i "sine=frequency=440:duration=3" -q:a 9 -acodec libmp3lame -y ci/smoke/web/assets/sounds/test.mp3
 
