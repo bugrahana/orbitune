@@ -5,7 +5,8 @@
   "description": "Orbitune - canli radyo PWA, Capacitor ile Android APK sarmalayicisi",
   "scripts": {
     "android:add": "cap add android",
-    "android:sync": "cap copy android"
+    "android:sync": "cap copy android",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.0",
@@ -14,6 +15,7 @@
     "@capgo/capacitor-native-audio": "^8.4.38"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.6.0"
+    "@capacitor/cli": "^8.6.0",
+    "patch-package": "^8.0.0"
   }
 }
