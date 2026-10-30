@@ -1,226 +1,242 @@
 # Changelog
 
-This branch adds a native Android APK wrapper (via Capacitor) around the
-existing PWA, with real background-audio playback, lock-screen/notification
-media controls, and a full CI/CD pipeline (automated tests + signed-release
-builds). The web app itself (`index.html`, `styles.css`, `facts.js`,
-`pets.js`) is unchanged; only `app.js` gained native-specific code paths and
-bug fixes, all guarded behind `isNative`/`NativeAudio` checks so the
-plain-web/PWA behavior is untouched.
+Bu branch, mevcut PWA'nın etrafına Capacitor ile gerçek bir Android APK
+sarmalayıcısı ekliyor: arka planda güvenilir ses çalma, kilit ekranı/bildirim
+medya kontrolleri, ve eksiksiz bir CI/CD pipeline'ı (otomatik testler +
+imzalı/yayın derlemeleri). Web uygulamasının kendisi (`index.html`,
+`styles.css`, `facts.js`, `pets.js`) değişmedi; sadece `app.js`'e native'e
+özel kod yolları ve hata düzeltmeleri eklendi, hepsi `isNative`/`NativeAudio`
+kontrolleriyle korunuyor, yani düz web/PWA davranışı aynen duruyor.
 
-## Added
+## Eklenenler
 
-### Android app wrapper
+### Android uygulama sarmalayıcısı
 - `capacitor.config.json`, `package.json` / `package-lock.json`: Capacitor
-  project config and dependencies (`@capacitor/core`, `@capacitor/android`,
-  `@capgo/capacitor-native-audio`, `@capgo/capacitor-media-session`).
-- `patches/`: two [patch-package](https://github.com/ds300/patch-package)
-  patches fixing real bugs found in `@capgo/capacitor-media-session`'s
-  Android source (see "Fixed" below) — applied automatically via a
-  `postinstall` script on every `npm install`.
+  proje yapılandırması ve bağımlılıklar (`@capacitor/core`,
+  `@capacitor/android`, `@capgo/capacitor-native-audio`,
+  `@capgo/capacitor-media-session`).
+- `patches/`: [patch-package](https://github.com/ds300/patch-package) ile
+  `@capgo/capacitor-media-session`'ın Android kaynak kodunda bulunan iki
+  gerçek hatayı düzelten patch (aşağıdaki "Düzeltilenler" bölümüne bakın) —
+  her `npm install`'da `postinstall` script'i ile otomatik uygulanıyor.
 
 ### CI/CD (`.github/workflows/`)
-- **`android-apk.yml`** — builds and publishes a release APK to GitHub
-  Releases. Triggered by pushing a `v*` tag (real release) or manually
-  (`workflow_dispatch`, produces a `dev-N` pre-release build). See "Using the
-  pipeline" below for the full walkthrough.
-- **`debug-logcat.yml`** — "Real App Crash & Lifecycle Test": installs the
-  actual app on an emulator and asserts the Activity/process survives a
-  back-press at the root screen *and* with an in-app panel open (e.g.
-  settings), that `app.js` isn't silently reloaded (which would orphan the
-  native audio player), and that both a resumed and a fresh/force-stopped
-  launch are crash-free. Runs on every push touching the app's JS/HTML/CI
-  files, or manually.
-- **`native-audio-smoketest.yml`** — two jobs:
-  - `pure-logic-unit-tests`: the 7 Node test files in `ci/unit/` (no
-    emulator, seconds to run).
-  - `smoke-test`: builds a minimal harness app, boots an emulator, and
-    asserts background playback + lock-screen/notification controls
-    actually work, including a **ground-truth concurrency check**: it
-    rapid-mashes station switching for ~1s while sampling
-    `dumpsys audio`'s live `AudioPlaybackConfiguration` list, and fails the
-    build if more than one is ever genuinely `state:started` for the app's
-    uid at once (this is what caught and proved the fix for the
-    "two stations play at once" bug — see "Fixed" below).
+- **`android-apk.yml`** — release APK'sını derleyip GitHub Releases'e
+  yayınlıyor. `v*` formatında bir tag push'landığında (gerçek release) veya
+  manuel (`workflow_dispatch`, `dev-N` ön-sürüm derlemesi üretir)
+  tetikleniyor. Tam kullanım kılavuzu için aşağıdaki "Pipeline'ı kullanma"
+  bölümüne bakın.
+- **`debug-logcat.yml`** — "Real App Crash & Lifecycle Test": gerçek
+  uygulamayı bir emulator'a kurup, kök ekranda geri tuşuna basıldığında *ve*
+  bir panel açıkken (örn. ayarlar) Activity/process'in hayatta kaldığını,
+  `app.js`'in sessizce yeniden yüklenmediğini (bu native ses çalarını öksüz
+  bırakır) ve hem devam ettirilen hem de taze/force-stop sonrası açılışın
+  çökme içermediğini doğruluyor. Uygulamanın JS/HTML/CI dosyalarını
+  etkileyen her push'ta veya manuel çalışıyor.
+- **`native-audio-smoketest.yml`** — iki iş:
+  - `pure-logic-unit-tests`: `ci/unit/`'teki 7 Node test dosyası (emulator
+    yok, saniyeler içinde biter).
+  - `smoke-test`: minimal bir harness uygulaması derleyip bir emulator
+    açıyor, arka planda çalmanın + kilit ekranı/bildirim kontrollerinin
+    gerçekten çalıştığını doğruluyor, bunun içinde bir **ground-truth
+    eşzamanlılık kontrolü** var: ~1 saniye boyunca istasyon değiştirmeyi
+    hızlıca tekrarlarken `dumpsys audio`'nun canlı
+    `AudioPlaybackConfiguration` listesinden örnekleme yapıyor, uygulamanın
+    uid'si için aynı anda birden fazla gerçekten `state:started` görülürse
+    derlemeyi başarısız yapıyor (bu, "aynı anda iki istasyon çalıyor"
+    hatasını yakalayıp düzeltmeyi kanıtlayan test — bkz. "Düzeltilenler").
 
-### Tests (`ci/unit/`, `ci/debug/`, `ci/smoke/`)
-Pure-Node tests (no emulator) for the native-specific logic added to
-`app.js`, each written test-first against a failing repro before the fix
-landed:
-- `playback-mutex.test.js` — the native-audio switch/overlap mutex, against
-  fakes modeling two real confirmed plugin bugs (early-resolving `unload()`,
-  and `preload()` rejecting on a stale registry entry).
-- `resume-reconcile.test.js` — UI state resyncing to real native playback
-  state on `visibilitychange`, including a race-condition scenario.
-- `boot-reconcile.test.js` — same resync, but on a fresh `boot()` (a
-  separate code path from resume).
-- `dom-boot.test.js` — boots the real `index.html` + `app.js` + `facts.js` +
-  `pets.js` in jsdom for both the plain-web and native-mocked code paths,
-  asserting zero uncaught exceptions (sub-second regression guard for the
-  "every button silently stopped working" crash class of bug).
+### Testler (`ci/unit/`, `ci/debug/`, `ci/smoke/`)
+`app.js`'e eklenen native'e özel mantık için saf Node testleri (emulator
+gerektirmiyor), her biri düzeltmeden önce önce başarısız olan bir repro'ya
+karşı yazıldı (TDD):
+- `playback-mutex.test.js` — native-audio geçiş/çakışma mutex'i, iki gerçek
+  doğrulanmış plugin hatasını modelleyen sahte (fake) implementasyonlara
+  karşı (erken resolve olan `unload()`, ve eski bir registry kaydı yüzünden
+  reddeden `preload()`).
+- `resume-reconcile.test.js` — `visibilitychange` olayında UI durumunun
+  gerçek native çalma durumuna yeniden senkronize olması, bir yarış durumu
+  senaryosu dahil.
+- `boot-reconcile.test.js` — aynı senkronizasyon, ama taze bir `boot()`
+  üzerinde (resume'den ayrı bir kod yolu).
+- `dom-boot.test.js` — gerçek `index.html` + `app.js` + `facts.js` +
+  `pets.js`'i jsdom içinde hem düz-web hem native-mock'lanmış kod yolu için
+  açıp, sıfır yakalanmamış exception olduğunu doğruluyor ("her buton
+  sessizce çalışmayı kesti" hata sınıfı için saniyenin altında süren bir
+  regresyon koruması).
 - `pure-logic.test.js`, `display-and-state.test.js`, `data-integrity.test.js`
-  — broader coverage added proactively (fade volume curves, country
-  fallback logic, skip/autoskip behavior, queue-type-dependent neighbour
-  selection, etc.), not tied to one specific incident.
-- `ci/debug/check.sh` + `push-history.js` — emulator-based lifecycle
-  assertions (see `debug-logcat.yml` above); `push-history.js` drives the
-  app's WebView via the Chrome DevTools Protocol (on by default in debug
-  builds) to simulate "a panel is open" without needing real UI taps.
-- `ci/smoke/` — the minimal harness app + its own `app.js` used by the
-  smoke-test job, including the rapid-switch stress sequence used for the
-  ground-truth overlap measurement.
+  — proaktif olarak eklenen daha geniş kapsam (fade ses eğrileri, ülke
+  fallback mantığı, skip/autoskip davranışı, queue tipine bağlı komşu
+  seçimi vb.), belirli bir olaya bağlı değil.
+- `ci/debug/check.sh` + `push-history.js` — emulator tabanlı lifecycle
+  doğrulamaları (bkz. yukarıdaki `debug-logcat.yml`); `push-history.js`,
+  gerçek UI dokunuşuna gerek kalmadan "bir panel açık" durumunu simüle
+  etmek için uygulamanın WebView'ini Chrome DevTools Protocol üzerinden
+  (debug derlemelerinde varsayılan olarak açık) yönlendiriyor.
+- `ci/smoke/` — smoke-test işinin kullandığı minimal harness uygulaması +
+  kendi `app.js`'i, ground-truth çakışma ölçümü için kullanılan hızlı geçiş
+  stres dizisi dahil.
 
-## Changed (`app.js`)
+## Değişenler (`app.js`)
 
-All native-only; the plain-web/PWA code paths are unchanged.
+Hepsi sadece native'e özel; düz web/PWA kod yolları değişmedi.
 
-- Native audio playback now goes through `@capgo/capacitor-native-audio`
-  (ExoPlayer-backed, survives backgrounding) instead of a WebView `<audio>`
-  element, which Android can suspend in the background at any time.
-- Native lock-screen/notification media controls (play/pause/next/previous)
-  via `@capgo/capacitor-media-session`, mirroring the existing Web
-  MediaSession API code path.
-- Every native-audio-mutating call (`stop`/`unload`/`preload`/`play`) is
-  serialized through a `queueNative` mutex with a `playGen` generation
-  counter, so rapid station switching can never leave two overlapping
-  streams or race a stale async result into stomping a newer action.
-- `boot()` and the `visibilitychange` handler both reconcile `player.status`
-  against what the native layer actually reports (`isPlaying`), instead of
-  assuming the UI's last-known state is still correct — needed because an
-  OEM killing/recreating the Activity in the background (or any other
-  Activity-recreation trigger) can leave the UI showing "not playing" over
-  audio that's genuinely still live.
-- Station artwork fallback: when Radio Browser's own `favicon` field is
-  empty/broken, a favicon-by-domain lookup (derived from the station's
-  `homepage` field) is tried as a second `<img>` source, with its generic
-  "no icon found" placeholder detected (by image size) and rejected rather
-  than shown.
-- Permission footprint deliberately kept to parity with Spotify: only the
-  standard `POST_NOTIFICATIONS` runtime prompt (needed for the lock-screen/
-  notification UI to be allowed to show on Android 13+) — no automatic
-  battery-optimization-exemption request, no OEM "autostart" screens.
+- Native ses çalma artık bir WebView `<audio>` elementi yerine
+  `@capgo/capacitor-native-audio` (ExoPlayer tabanlı, arka planda hayatta
+  kalıyor) üzerinden yapılıyor - Android, `<audio>` elementini arka planda
+  herhangi bir anda askıya alabiliyordu.
+- Native kilit ekranı/bildirim medya kontrolleri (çal/duraklat/sonraki/
+  önceki), `@capgo/capacitor-media-session` ile, mevcut Web MediaSession
+  API kod yolunu yansıtıyor.
+- Native ses durumunu değiştiren her çağrı (`stop`/`unload`/`preload`/
+  `play`), bir `playGen` jenerasyon sayacıyla birlikte `queueNative`
+  mutex'i üzerinden sıralanıyor, böylece hızlı istasyon değiştirme asla iki
+  çakışan akış bırakamıyor veya eski bir async sonucun daha yeni bir eylemi
+  ezmesine yol açamıyor.
+- `boot()` ve `visibilitychange` handler'ı artık `player.status`'u, UI'nin
+  son bilinen durumunu doğru kabul etmek yerine, native katmanın
+  gerçekte ne rapor ettiğine (`isPlaying`) göre senkronize ediyor - bir
+  OEM'in Activity'yi arka planda öldürüp yeniden oluşturması (veya başka
+  bir Activity-yeniden-oluşturma tetikleyicisi), UI'nin gerçekte hâlâ canlı
+  olan ses üzerinde "çalmıyor" göstermesine yol açabiliyordu.
+- İstasyon görseli fallback'i: Radio Browser'ın kendi `favicon` alanı boş/
+  kırıksa, istasyonun `homepage` alanından türetilen bir domain-bazlı
+  favicon araması ikinci bir `<img>` kaynağı olarak deneniyor, "ikon
+  bulunamadı" jenerik placeholder'ı (görsel boyutuna bakılarak) tespit
+  edilip gösterilmeden reddediliyor.
+- İzin kapsamı kasıtlı olarak Spotify ile aynı seviyede tutuldu: sadece
+  standart `POST_NOTIFICATIONS` runtime izni (kilit ekranı/bildirim UI'nin
+  Android 13+'ta gösterilebilmesi için gerekli) - otomatik pil optimizasyonu
+  istisnası isteği yok, OEM "otomatik başlatma" ekranları yok.
 
-## Fixed
+## Düzeltilenler
 
-Real, user-reported bugs found on a physical device (Xiaomi Redmi Note 8
-Pro, Android 11, MIUI) and in the plugins' own Android source, each with a
-failing test added before the fix:
+Gerçek bir cihazda (Xiaomi Redmi Note 8 Pro, Android 11, MIUI) kullanıcı
+tarafından bildirilen ve plugin'lerin kendi Android kaynak kodunda bulunan
+gerçek hatalar, her biri düzeltmeden önce eklenen başarısız bir testle:
 
-1. **Every button silently non-functional on first launch.** Root cause:
-   `MediaSession.setActionHandler()` doesn't return a Promise (it's a
-   RETURN_CALLBACK-style plugin method) — calling `.catch()` on its result
-   threw `TypeError`, which aborted the rest of `app.js`'s top-level script
-   before any click handler below it got wired up. Fixed by wrapping in
-   `try`/`catch` instead.
-2. **Back button orphaned the native audio player.** Capacitor's default
-   back-button behavior can finish() the Activity even when there's nothing
-   to navigate back to in-app; `MainActivity.onBackPressed()` now calls
-   `webView.goBack()` when there's in-app history (closing a panel/sheet)
-   or `moveTaskToBack(true)` otherwise (mirrors the Home button) — never
-   `super.onBackPressed()`, whose behavior on a `BridgeActivity` isn't
-   guaranteed to just navigate WebView history.
-3. **Two stations playing at once / pause silently stopped working.**
-   `@capgo/capacitor-native-audio`'s `unload()` resolves its JS promise
-   before the actual native teardown (`player.release()`, posted to the UI
-   thread) has necessarily run — confirmed by reading the plugin's Android
-   source. A rapid station switch could issue a new `preload()`+`play()`
-   while the previous stream was still mid-teardown, leaving two ExoPlayer
-   instances genuinely active. Fixed with a short defensive delay after
-   `unload()` plus the `queueNative`/`playGen` mutex described above;
-   empirically verified via the `dumpsys audio` ground-truth stress test in
-   `native-audio-smoketest.yml` (max concurrent `state:started` entries for
-   the app's uid: **1**, under a 12-switch rapid-mash sequence).
-4. **UI showed "not playing" after a background restart while audio was
-   still genuinely live** (and vice versa). Neither `boot()` nor the resume
-   path asked the native layer what was actually happening; both now
-   reconcile against `NativeAudio.isPlaying()`.
-5. **Notification/lock-screen play and pause buttons did nothing when
-   tapped** (next/previous/stop worked fine). Root cause, found by reading
-   `@capgo/capacitor-media-session`'s actual Android source: its play/pause
-   notification buttons build their `PendingIntent` via
-   `MediaButtonReceiver.buildMediaButtonPendingIntent(context, action)`,
-   passing a bitwise-OR of two different `PlaybackStateCompat.ACTION_*`
-   constants (e.g. `ACTION_PLAY_PAUSE | ACTION_PAUSE`) — but that helper's
-   internal `toKeyCode(long)` only matches a single exact constant, so the
-   combined value matches nothing and silently resolves to
-   `KEYCODE_UNKNOWN`. Fixed via a `patch-package` patch passing the single
-   correct flag instead.
-6. **Swiping the app away from recents didn't stop playback.**
-   `@capgo/capacitor-native-audio` has no `Service` of its own at all —
-   the only thing keeping the process (and therefore the native player)
-   alive in the background is `@capgo/capacitor-media-session`'s
-   `MediaSessionService`, a foreground service which, like any foreground
-   service, survives task removal unless it explicitly handles it. Fixed
-   via a second `patch-package` patch adding `Service.onTaskRemoved()`
-   (stops the foreground service, then kills the process directly, since
-   by the time this fires the Activity/WebView — and any way to reach the
-   player through the JS bridge — is already gone).
-7. **Connecting to a station sometimes failed instantly, then worked after
-   a couple of manual retries** — especially noticeable returning to a
-   station just switched away from. Root cause, found by reading
-   `@capgo/capacitor-native-audio`'s actual source: `preloadAsset()`
-   unconditionally rejects if its internal registry still has an entry for
-   the assetId; `unload()` is supposed to clear that entry, but its own
-   native call can throw before reaching the line that removes it (silently
-   swallowed on the JS side), so the very next `preload()` for the same
-   station rejects immediately — no 15s timeout, just an instant error. A
-   single bounded retry (force another `unload()` + `preload()`) recovers
-   automatically instead of needing a manual re-tap.
+1. **İlk açılışta her buton sessizce çalışmıyordu.** Kök sebep:
+   `MediaSession.setActionHandler()` bir Promise döndürmüyor (RETURN_CALLBACK
+   tarzı bir plugin metodu) - sonucuna `.catch()` çağırmak `TypeError`
+   fırlatıyordu, bu da `app.js`'in üst-seviye script'inin devamının, altındaki
+   hiçbir click handler bağlanmadan kesilmesine yol açıyordu. `try`/`catch`
+   ile sarmalayarak düzeltildi.
+2. **Geri tuşu native ses çalarını öksüz bırakıyordu.** Capacitor'ın
+   varsayılan geri-tuşu davranışı, geri gidilecek bir şey olmasa da
+   Activity'yi finish() edebiliyor; `MainActivity.onBackPressed()` artık
+   in-app geçmiş varsa (bir panel/sheet kapatma) `webView.goBack()`,
+   yoksa (Home tuşunu yansıtan) `moveTaskToBack(true)` çağırıyor - asla
+   `super.onBackPressed()` değil, çünkü onun bir `BridgeActivity` üzerindeki
+   davranışı sadece WebView geçmişinde gitmeyi garanti etmiyor.
+3. **Aynı anda iki istasyon çalması / duraklat'ın sessizce çalışmayı
+   kesmesi.** `@capgo/capacitor-native-audio`'nun `unload()`'u, gerçek
+   native temizlik (`player.release()`, UI thread'e postalanıyor) henüz
+   çalışmadan JS promise'ini resolve ediyor - plugin'in Android kaynak kodu
+   okunarak doğrulandı. Hızlı bir istasyon değişimi, önceki akış hâlâ
+   native tarafta temizlenirken yeni bir `preload()`+`play()` tetikleyip
+   gerçekten iki ExoPlayer örneğinin aynı anda aktif olmasına yol
+   açabiliyordu. `unload()` sonrası kısa bir savunma amaçlı gecikme ile ve
+   yukarıda açıklanan `queueNative`/`playGen` mutex'iyle düzeltildi;
+   `native-audio-smoketest.yml`'deki `dumpsys audio` ground-truth stres
+   testiyle ampirik olarak doğrulandı (12 hızlı geçişlik bir dizi boyunca,
+   uygulamanın uid'si için eşzamanlı `state:started` kaydı sayısı en fazla:
+   **1**).
+4. **Arka plandan yeniden başlatma sonrası, ses hâlâ gerçekten çalıyorken
+   UI "çalmıyor" gösteriyordu** (ve tersi de olabiliyordu). Ne `boot()` ne
+   de resume yolu native katmana gerçekte ne olduğunu soruyordu; ikisi de
+   artık `NativeAudio.isPlaying()`'e göre senkronize oluyor.
+5. **Bildirim/kilit ekranı çal ve duraklat butonları dokunulduğunda hiçbir
+   şey yapmıyordu** (sonraki/önceki/durdur sorunsuz çalışıyordu). Kök
+   sebep, `@capgo/capacitor-media-session`'ın gerçek Android kaynak kodu
+   okunarak bulundu: çal/duraklat bildirim butonları,
+   `PendingIntent`'lerini `MediaButtonReceiver.buildMediaButtonPendingIntent
+   (context, action)` ile oluşturuyor, buna iki farklı
+   `PlaybackStateCompat.ACTION_*` sabitinin bit-bazında OR'unu veriyordu
+   (örn. `ACTION_PLAY_PAUSE | ACTION_PAUSE`) - ama bu yardımcı fonksiyonun
+   iç `toKeyCode(long)`'u sadece tek, kesin bir sabiti eşleştiriyor, yani
+   birleşik değer hiçbir şeyle eşleşmiyor ve sessizce `KEYCODE_UNKNOWN`'a
+   düşüyordu. Doğru tek bayrağı geçen bir `patch-package` patch'iyle
+   düzeltildi.
+6. **Uygulamayı çalışan uygulamalardan (recents) kaydırıp kapatmak çalmayı
+   durdurmuyordu.** `@capgo/capacitor-native-audio`'nun kendi hiçbir
+   Service'i yok - process'i (ve dolayısıyla native ses çalarını) arka
+   planda canlı tutan tek şey `@capgo/capacitor-media-session`'ın
+   `MediaSessionService`'i, bir foreground service ki her foreground
+   service gibi, açıkça ele alınmadığı sürece task kaldırılmasından sağ
+   çıkıyor. İkinci bir `patch-package` patch'iyle `Service.onTaskRemoved()`
+   eklenerek düzeltildi (foreground service'i durduruyor, ardından process'i
+   doğrudan kill ediyor, çünkü bu noktada Activity/WebView - ve player'a JS
+   bridge üzerinden ulaşmanın herhangi bir yolu - zaten gitmiş oluyor).
+7. **Bir istasyona bağlanmak bazen anında başarısız oluyordu, birkaç
+   manuel deneme sonrası çalışıyordu** - özellikle az önce değiştirilen bir
+   istasyona geri dönülürken fark ediliyordu. Kök sebep,
+   `@capgo/capacitor-native-audio`'nun gerçek kaynak kodu okunarak bulundu:
+   `preloadAsset()`, iç registry'sinde bu assetId için hâlâ bir kayıt varsa
+   koşulsuz olarak reddediyor; `unload()`'un bu kaydı temizlemesi
+   gerekiyor, ama kendi native çağrısı, kaydı kaldıran satıra ulaşmadan
+   önce hata fırlatabiliyor (JS tarafında sessizce yutuluyor), bu yüzden
+   aynı istasyon için bir sonraki `preload()` anında reddediliyor - 15s
+   timeout yok, anında bir hata. Sınırlı, tek seferlik bir retry (zorla
+   bir `unload()` + `preload()` daha) bunu manuel tekrar dokunmaya gerek
+   kalmadan otomatik olarak kurtarıyor.
 
-## Using the pipeline
+## Pipeline'ı kullanma
 
-Three workflows live in `.github/workflows/`. The two test workflows run
-automatically; the release workflow is deliberately **not** automatic on
-every push — tags and manual runs only, so every real GitHub Release is a
-deliberate action.
+`.github/workflows/` içinde üç workflow var. İki test workflow'u otomatik
+çalışıyor; release workflow'u kasıtlı olarak her push'ta **otomatik değil**
+- sadece tag'ler ve manuel çalıştırmalar, böylece her gerçek GitHub Release
+bilinçli bir eylem oluyor.
 
-### Running the tests
-- **`native-audio-smoketest.yml`** and **`debug-logcat.yml`** both run
-  automatically on every push to `main` or `feature/**` that touches
-  `app.js`, `index.html`, `facts.js`, `pets.js`, or the workflow/`ci/*`
-  files themselves — no action needed, just open a PR or push a commit.
-- To run either on demand without a qualifying push: GitHub →
-  **Actions** → pick the workflow → **Run workflow** (this is
-  `workflow_dispatch`, available on all three workflows).
-- Both are emulator-based (except `pure-logic-unit-tests`, which is pure
-  Node and takes seconds) and can occasionally fail on CI-runner/emulator
-  flakiness unrelated to the code (`adb: device offline`, GPU/texture
-  errors, transient Maven/network blips) — re-running the job is the normal
-  fix for those; a *consistent* failure across a retry is the one worth
-  investigating.
+### Testleri çalıştırma
+- **`native-audio-smoketest.yml`** ve **`debug-logcat.yml`**, `app.js`,
+  `index.html`, `facts.js`, `pets.js`, veya workflow/`ci/*` dosyalarının
+  kendisini etkileyen `main` veya `feature/**`'e her push'ta otomatik
+  çalışıyor - hiçbir işlem gerekmiyor, sadece bir PR açmak veya commit
+  push'lamak yeterli.
+- İkisini de uygun bir push olmadan talep üzerine çalıştırmak için: GitHub
+  → **Actions** → workflow'u seç → **Run workflow** (bu `workflow_dispatch`,
+  üç workflow'da da mevcut).
+- İkisi de emulator tabanlı (`pure-logic-unit-tests` hariç, o saf Node ve
+  saniyeler sürüyor) ve bazen kodla ilgisiz CI-runner/emulator arızalarıyla
+  başarısız olabiliyor (`adb: device offline`, GPU/texture hataları, geçici
+  Maven/ağ kesintileri) - bunlar için normal çözüm job'u tekrar çalıştırmak;
+  bir retry'den sonra da *tutarlı* şekilde başarısız olması araştırılmaya
+  değer olan durum.
 
-### Cutting a release
-1. **Dev/pre-release build** (for testing on a real device before tagging):
-   GitHub → **Actions** → **Android APK Release** → **Run workflow** on
-   `main`. This produces a pre-release tagged `dev-N` (an incrementing
-   counter) with the APK attached — use this to validate a change on a
-   real device before committing to a version number.
-2. **Real version release**: once a build has been validated, tag that
-   exact commit and push the tag:
+### Release çıkarma
+1. **Dev/ön-sürüm derlemesi** (tag'lemeden önce gerçek cihazda test için):
+   GitHub → **Actions** → **Android APK Release** → `main` üzerinde
+   **Run workflow**. Bu, APK'sı eklenmiş, `dev-N` (artan bir sayaç) olarak
+   tag'lenmiş bir ön-sürüm üretir - bir değişikliği bir versiyon numarasına
+   bağlanmadan önce gerçek cihazda doğrulamak için kullanılır.
+2. **Gerçek versiyon release'i**: bir derleme doğrulandıktan sonra, tam o
+   commit'i tag'leyip push'la:
    ```sh
    git tag -a vX.Y.Z -m "Orbitune vX.Y.Z
 
-   <changelog for this version>"
+   <bu versiyon için changelog>"
    git push origin vX.Y.Z
    ```
-   Pushing a tag matching `v*` triggers the same workflow, but this time it
-   publishes a real (non-prerelease) GitHub Release titled "Orbitune
-   vX.Y.Z" with `Orbitune-vX.Y.Z.apk` attached.
-3. The workflow itself: installs dependencies (applying the `patch-package`
-   patches), copies the web assets into a fresh Capacitor Android project,
-   patches in the background-audio permissions and `MainActivity.java`,
-   builds a debug APK (no signing keystore needed — this is a sideloadable
-   debug build, not a Play Store release), **verifies** the merged
-   manifest actually has the 4 required permissions/components and that
-   the exact permission set hasn't silently grown (a plugin update adding
-   an unexpected permission fails the build on purpose, forcing a
-   deliberate review), renames the APK to match the version, and publishes
-   it as a GitHub Release.
+   `v*` ile eşleşen bir tag push'lamak aynı workflow'u tetikliyor, ama bu
+   sefer "Orbitune vX.Y.Z" başlıklı gerçek (prerelease olmayan) bir GitHub
+   Release'i, `Orbitune-vX.Y.Z.apk` eklenmiş şekilde yayınlıyor.
+3. Workflow'un kendisi: bağımlılıkları kuruyor (patch-package patch'lerini
+   uygulayarak), web asset'lerini taze bir Capacitor Android projesine
+   kopyalıyor, arka plan ses izinlerini ve `MainActivity.java`'yı
+   patch'liyor, bir debug APK derliyor (imzalama keystore'u gerekmiyor - bu
+   sideload edilebilir bir debug derlemesi, Play Store release'i değil),
+   birleştirilmiş manifest'in gerçekten 4 gerekli izni/bileşeni içerdiğini
+   ve tam izin setinin sessizce büyümediğini **doğruluyor** (bir plugin
+   güncellemesinin beklenmeyen bir izin eklemesi derlemeyi bilerek
+   başarısız yapıyor, bilinçli bir incelemeyi zorunlu kılıyor), APK'yı
+   versiyonla eşleşecek şekilde yeniden adlandırıyor, ve bir GitHub Release
+   olarak yayınlıyor.
 
-### If a plugin gets updated
-`npm install` re-applies both patches in `patches/` automatically via the
-`postinstall` script — nothing else to do, *unless* the new plugin version
-changed the exact lines the patches touch, in which case `patch-package`
-will fail loudly at install time (not silently skip) and the patch needs
-regenerating against the new version (`npx patch-package <pkg> --append` or
-edit `node_modules/` directly and re-run `npx patch-package <pkg>`).
+### Bir plugin güncellenirse
+`npm install`, `postinstall` script'i üzerinden `patches/`'teki iki patch'i
+otomatik olarak yeniden uyguluyor - başka bir şey yapmaya gerek yok, *tabii*
+yeni plugin versiyonu patch'lerin dokunduğu tam satırları değiştirmediyse;
+değiştirdiyse `patch-package` kurulum sırasında (sessizce atlamadan) yüksek
+sesle başarısız olacak ve patch'in yeni versiyona karşı yeniden üretilmesi
+gerekecek (`npx patch-package <pkg> --append` veya `node_modules/`'i
+doğrudan düzenleyip `npx patch-package <pkg>`'ı tekrar çalıştırmak).
