@@ -651,7 +651,25 @@ async function playStation(s, opts = {}) {
         // background" after switching/backgrounding. Give it a moment.
         await wait(120);
         if (gen !== playGen) return;
-        await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
+        try {
+          await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
+        } catch (_) {
+          // NativeAudio.java's preloadAsset() unconditionally rejects if its
+          // internal registry still has an entry for this assetId - which
+          // happens when unload() above threw natively (e.g. posting to a
+          // stale Activity reference) before it ever reached the line that
+          // clears that entry. We silently swallowed that failure above, so
+          // this is the only place left to recover: force another
+          // unload+preload before giving up. Matches the real-world "errors
+          // instantly, a couple of retries later connects fine" report -
+          // this makes the retry automatic instead of needing a user tap.
+          if (gen !== playGen) return;
+          try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+          try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
+          await wait(120);
+          if (gen !== playGen) return;
+          await NativeAudio.preload({ assetId: NATIVE_ASSET_ID, assetPath: s.url, isUrl: true, volume: 1 });
+        }
         if (gen !== playGen) {          // superseded while preloading - undo, don't play it
           try { await NativeAudio.stop({ assetId: NATIVE_ASSET_ID }); } catch (_) {}
           try { await NativeAudio.unload({ assetId: NATIVE_ASSET_ID }); } catch (_) {}

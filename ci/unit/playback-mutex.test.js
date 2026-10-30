@@ -79,6 +79,57 @@ function makeFakeNativeAudioWithSlowRelease(log) {
   };
 }
 
+// Models a real, confirmed bug found by reading the plugin's actual Android
+// source (NativeAudio.java's preloadAsset()): it unconditionally rejects if
+// its internal registry still has an entry for this assetId -
+// `if (audioAssetList.containsKey(audioId)) { call.reject(...); return; }`.
+// unload() is supposed to clear that entry, but unload()'s own native call
+// (asset.unload(), e.g. posting to a stale/destroyed Activity's
+// runOnUiThread) can throw BEFORE the line that removes the registry entry
+// ever runs - and our own code swallows that unload() failure silently
+// (try{}catch(_){}), so the very next preload() for the same station hits
+// this guard and rejects immediately (no 15s timeout, just an instant
+// "connection error"). This models exactly that: switching AWAY from an
+// already-loaded station has its unload() call throw without clearing the
+// registry (the first unload, with nothing loaded yet, has nothing to get
+// stuck on - the bug bites on the switch-away/return, not the very first
+// play); a bare retry (another unload + preload) is what actually
+// recovers, same as a user manually re-tapping the station eventually
+// succeeds in the field.
+function makeFakeNativeAudioWithStuckRegistryOnUnloadFailure(log, failOnUnloadCall = 2) {
+  let loaded = null;
+  let playing = null;
+  let unloadCalls = 0;
+  return {
+    async stop() { log.push(['stop', playing]); playing = null; await delay(5); },
+    async unload() {
+      unloadCalls++;
+      await delay(5);
+      if (unloadCalls === failOnUnloadCall) {
+        log.push(['unload-THREW-NATIVELY (registry entry NOT cleared)', loaded]);
+        throw new Error('simulated: asset.unload() threw before audioAssetList.remove() ran');
+      }
+      log.push(['unload', loaded]);
+      loaded = null;
+    },
+    async preload(assetPath) {
+      await delay(10);
+      if (loaded) {
+        throw new Error(`AUDIO_ASSET_ALREADY_EXISTS - stream (simulated preloadAsset() registry guard, loaded="${loaded}")`);
+      }
+      loaded = assetPath;
+      log.push(['preload', assetPath]);
+    },
+    async play() {
+      await delay(5);
+      if (playing) throw new Error(`play() called while "${playing}" was already playing - OVERLAP BUG`);
+      playing = loaded;
+      log.push(['play', playing]);
+    },
+    getPlaying() { return playing; },
+  };
+}
+
 // --- exact copy of the mutex pattern from app.js (playStation's native branch) ---
 function makePlayer(NativeAudio) {
   let nativeQueue = Promise.resolve();
@@ -97,7 +148,21 @@ function makePlayer(NativeAudio) {
       try { await NativeAudio.unload(); } catch (_) {}
       await delay(120); // mirrors the wait(120) defensive delay in app.js
       if (gen !== playGen) return;
-      await NativeAudio.preload(stationId);
+      try {
+        await NativeAudio.preload(stationId);
+      } catch (_) {
+        // preload() can reject because its native registry still has a
+        // stale entry for this assetId - from unload() above throwing
+        // before it ever reached the line that clears that entry, which
+        // we just silently swallowed. One forced unload+preload retry is
+        // the only place left to recover from that.
+        if (gen !== playGen) return;
+        try { await NativeAudio.stop(); } catch (_) {}
+        try { await NativeAudio.unload(); } catch (_) {}
+        await delay(120);
+        if (gen !== playGen) return;
+        await NativeAudio.preload(stationId);
+      }
       if (gen !== playGen) {
         try { await NativeAudio.stop(); } catch (_) {}
         try { await NativeAudio.unload(); } catch (_) {}
@@ -182,12 +247,36 @@ async function scenarioSurvivesSlowNativeRelease() {
   return failures;
 }
 
+async function scenarioRecoversFromStuckRegistryAfterUnloadFailure() {
+  // Reproduces: "returning to a station sometimes errors instantly, a
+  // couple of retries later it connects fine." Play A (succeeds, loads
+  // normally), switch to B - but THIS switch's unload() (of A) throws
+  // without clearing the fake's registry, so B's preload() would reject
+  // immediately without a retry.
+  const log = [];
+  const fake = makeFakeNativeAudioWithStuckRegistryOnUnloadFailure(log, 2);
+  const player = makePlayer(fake);
+
+  await player.playStation('A');
+  await delay(150);
+  await player.playStation('B');
+  await delay(150);
+
+  const failures = [];
+  const plays = log.filter((e) => e[0] === 'play');
+  if (fake.getPlaying() !== 'B') {
+    failures.push(`expected B to end up playing despite its switch-in unload() throwing, got ${JSON.stringify(log)}`);
+  }
+  return failures;
+}
+
 async function main() {
   const scenarios = {
     'rapid double-tap never double-plays': scenarioDoubleTap,
     'rapid triple-tap only plays the last station': scenarioTripleTap,
     'normal sequential switches still both play': scenarioSequentialIsUnaffected,
     'survives capacitor-native-audio\'s slow/early-resolving unload()': scenarioSurvivesSlowNativeRelease,
+    'recovers when unload() throws and leaves the native registry stuck': scenarioRecoversFromStuckRegistryAfterUnloadFailure,
   };
 
   let allFailures = [];
