@@ -59,6 +59,9 @@ karşı yazıldı (TDD):
   senaryosu dahil.
 - `boot-reconcile.test.js` — aynı senkronizasyon, ama taze bir `boot()`
   üzerinde (resume'den ayrı bir kod yolu).
+- `mediasession-actions.test.js` — dışarıdan tetiklenen play/pause/stop
+  MediaSession eylemlerinin tek yönlü (idempotent) olduğunu, uygulamanın
+  kendi toggle butonu gibi davranmadığını doğruluyor.
 - `dom-boot.test.js` — gerçek `index.html` + `app.js` + `facts.js` +
   `pets.js`'i jsdom içinde hem düz-web hem native-mock'lanmış kod yolu için
   açıp, sıfır yakalanmamış exception olduğunu doğruluyor ("her buton
@@ -179,6 +182,16 @@ gerçek hatalar, her biri düzeltmeden önce eklenen başarısız bir testle:
    timeout yok, anında bir hata. Sınırlı, tek seferlik bir retry (zorla
    bir `unload()` + `preload()` daha) bunu manuel tekrar dokunmaya gerek
    kalmadan otomatik olarak kurtarıyor.
+8. **Bir launcher'ın now-playing widget'ından (örn. Niagara Launcher)
+   duraklattıktan sonra widget'ı dismiss etmek, radyoyu kendiliğinden
+   yeniden başlatıyordu.** Kök sebep: dışarıdan tetiklenen play/pause/stop
+   MediaSession eylemleri, uygulamanın kendi tek çal/duraklat butonu için
+   olan aynı toggle fonksiyonuna bağlıydı - zaten duraklatılmışken gelen
+   bir "stop" (ya da yinelenen bir "pause"), mevcut durumu kontrol edip
+   tersini yapan bu fonksiyonu, "canlı değil" görüp "devam ettir" dalına
+   soktuğu için çalmayı yeniden başlatıyordu. `ensurePlaying()`/
+   `ensurePaused()`/`ensureStopped()` gibi tek yönlü, durumdan bağımsız
+   fonksiyonlara bölünerek düzeltildi - gerçek cihazda doğrulandı.
 
 ## Pipeline'ı kullanma
 
