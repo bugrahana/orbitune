@@ -769,23 +769,44 @@ if (NativeAudio) {
   audio.addEventListener('pause', () => { if (player.switching) return; if (player.status === 'live' || player.status === 'loading') { clearTimeout(player.loadTimer); player.status = 'paused'; render(); updateMediaSession(); } });
 }
 
+// ensurePlaying/ensurePaused/ensureStopped are one-directional "make it so"
+// commands - unlike togglePlay() (for the app's own single toggle button),
+// they never inspect-then-do-the-opposite. Needed for anything triggered
+// EXTERNALLY (notification/lock-screen buttons, hardware media keys,
+// launcher "now playing" widgets like Niagara): those send a plain
+// play/pause/stop command, not a toggle, and a late/redundant/dismiss-
+// triggered one arriving while already in that state must be a no-op, not
+// flip to the opposite state. Confirmed real-world trigger: dismissing
+// Niagara Launcher's now-playing widget after pausing from it sends a
+// "stop" command, which - when wired to togglePlay() - saw a non-live
+// status and restarted playback instead of stopping it.
+function ensurePlaying() {
+  if (!player.station || player.status === 'live' || player.status === 'loading') return;
+  playStation(player.station, { queue: player.queue, adoptCountry: false });
+}
+function ensurePaused() {
+  if (!player.station || !(player.status === 'live' || player.status === 'loading')) return;
+  if (NativeAudio) {
+    playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
+    const gen = playGen;
+    queueNative(() => { if (gen !== playGen) return; return NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}); });
+    clearTimeout(player.loadTimer);
+    clearWatchdog();
+    player.status = 'paused';
+    render();
+    updateMediaSession();
+  } else audio.pause();
+}
+function ensureStopped() {
+  if (!player.station) return;
+  player.stop();
+  updateMediaSession();
+}
 function togglePlay() {
   if (!player.station) { shuffleCountry(); return; }
-  if (player.status === 'live' || player.status === 'loading') {
-    if (NativeAudio) {
-      playGen++; // invalidate any in-flight playStation() attempt so it can't resurrect a 2nd stream
-      const gen = playGen;
-      queueNative(() => { if (gen !== playGen) return; return NativeAudio.pause({ assetId: NATIVE_ASSET_ID }).catch(() => {}); });
-      clearTimeout(player.loadTimer);
-      clearWatchdog();
-      player.status = 'paused';
-      render();
-      updateMediaSession();
-    } else audio.pause();
-    return;
-  }
+  if (player.status === 'live' || player.status === 'loading') { ensurePaused(); return; }
   // Live radio: rejoin the live edge instead of resuming a stale buffer.
-  playStation(player.station, { queue: player.queue, adoptCountry: false });
+  ensurePlaying();
 }
 
 function neighbour(dir, skipping) {
@@ -854,17 +875,17 @@ function updateMediaSession() {
 }
 if (MediaSessionNative) {
   const set = (action, fn) => { try { MediaSessionNative.setActionHandler({ action }, () => fn()); } catch (_) {} };
-  set('play', () => togglePlay());
-  set('pause', () => togglePlay());
-  set('stop', () => togglePlay());
+  set('play', () => ensurePlaying());
+  set('pause', () => ensurePaused());
+  set('stop', () => ensureStopped());
   set('nexttrack', () => playNeighbour(1));
   set('previoustrack', () => playNeighbour(-1));
 } else if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
   const set = (a, fn) => { try { ms.setActionHandler(a, fn); } catch (_) {} };
-  set('play', () => togglePlay());
-  set('pause', () => audio.pause());
-  set('stop', () => audio.pause());
+  set('play', () => ensurePlaying());
+  set('pause', () => ensurePaused());
+  set('stop', () => ensureStopped());
   set('nexttrack', () => playNeighbour(1));
   set('previoustrack', () => playNeighbour(-1));
 }

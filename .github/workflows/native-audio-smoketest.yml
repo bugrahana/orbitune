@@ -55,6 +55,9 @@ jobs:
       - name: Run boot-time native-playback reconciliation test
         run: node ci/unit/boot-reconcile.test.js
 
+      - name: Run MediaSession action-handler one-directionality test
+        run: node ci/unit/mediasession-actions.test.js
+
   smoke-test:
     runs-on: ubuntu-latest
     steps:
